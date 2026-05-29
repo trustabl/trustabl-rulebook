@@ -1,6 +1,9 @@
 # OpenAI Agents SDK rule pack
 
-Rules under this directory target the [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/).
+This page indexes the OpenAI Agents SDK rules and links their rationale docs.
+The rule **YAML lives in [trustabl-rules](https://github.com/trustabl/trustabl-rules/tree/main/openai_sdk)**,
+not in this directory — the filenames below name the files in that pack. The
+rules target the [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/).
 
 ## Supported SDK version
 

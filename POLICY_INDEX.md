@@ -9,22 +9,30 @@ low=0.15, medium=0.40, high=0.70). Higher = worse.
 
 ## Contributing a new policy
 
-Every policy in this index follows the same authoring template. The template
-lives at [docs/policy-rationale-doc-template-guide.md](docs/policy-rationale-doc-template-guide.md)
-and defines the rule YAML schema, the paired rationale doc at
-`docs/Policy/<category>/<topic>.md`, and the required sections (threat model,
-detection mechanics, references). Users can contribute their own policies by:
+Every policy in this index has a paired rationale doc following the same
+authoring template. The template lives at
+[docs/policy-rationale-doc-template-guide.md](docs/policy-rationale-doc-template-guide.md)
+and defines the rationale doc at `docs/Policy/<category>/<topic>.md` and its
+required sections (threat model, detection mechanics, references). The
+authoritative rule YAML schema lives in the engine
+([internal/rules/schema.yaml](https://github.com/trustabl/trustabl/blob/main/internal/rules/schema.yaml)).
+Users can contribute their own policies by:
 
-1. Reading [CLAUDE.md](CLAUDE.md) for the rule-authoring contract (required
-   fields, per-scope `applies_to` values, ID conventions, severity guidance).
-2. Copying the template from
-   [docs/policy-rationale-doc-template-guide.md](docs/policy-rationale-doc-template-guide.md)
-   and filling every section.
-3. Adding the YAML rule under `<sdk_category>/<topic>.yaml` and the paired
-   rationale at `docs/Policy/<sdk_category>/<topic>.md`.
+1. Reading the rule-authoring contract in
+   [trustabl-rules/CLAUDE.md](https://github.com/trustabl/trustabl-rules/blob/main/CLAUDE.md)
+   (required fields, per-scope `applies_to` values, ID conventions, severity
+   guidance).
+2. Adding the YAML rule to the
+   [trustabl-rules](https://github.com/trustabl/trustabl-rules) repo under
+   `<sdk_category>/<topic>.yaml` — that is the pack the engine loads.
+3. Copying the template from
+   [docs/policy-rationale-doc-template-guide.md](docs/policy-rationale-doc-template-guide.md),
+   filling every section, and adding the paired rationale **here** at
+   `docs/Policy/<sdk_category>/<topic>.md`.
 4. Mirroring the rule into the engine repo's `testdata/rules-fixture/` with at
-   least one fire case and one silent case (see CLAUDE.md "Add a rule for X").
-5. Opening a PR — the rule appears here once merged.
+   least one fire case and one silent case (see the engine's
+   `testdata/rules-fixture/CLAUDE.md`, "Add a rule for X").
+5. Opening the PRs — the rule appears here once the rulebook PR merges.
 
 ## Totals
 

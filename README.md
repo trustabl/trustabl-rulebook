@@ -17,7 +17,6 @@ Coverage spans three agent SDKs:
 | ------------------------------------------------------------ | ------------------------------------------------------------- |
 | [POLICY_INDEX.md](POLICY_INDEX.md)                           | Master table of every shipped rule across all SDKs            |
 | `<sdk>/POLICY_INDEX.md`                                      | Per-SDK rule index                                            |
-| `<sdk>/*.yaml`                                               | Rule definitions consumed by the trustabl engine              |
 | [docs/Policy/](docs/Policy/)                                 | Paired rationale docs (threat model, detection, references)   |
 | [docs/policy-rationale-doc-template-guide.md](docs/policy-rationale-doc-template-guide.md) | Authoring template for new rules + rationale docs             |
 
@@ -47,27 +46,38 @@ Full breakdown: [POLICY_INDEX.md](POLICY_INDEX.md).
 
 ## Using the rulebook
 
-The trustabl engine shallow-clones `trustabl/trustabl-rulebook@main` into its
-local cache (`~/.cache/trustabl-rule-miner/`) and loads it as the active rule
-pack — no local checkout required for end users.
+This repo is **documentation only** — it contains no rule YAML and the trustabl
+engine never reads it. The engine resolves rules from
+[trustabl/trustabl-rules](https://github.com/trustabl/trustabl-rules): at scan
+time it clones the configured ref and caches it under
+`os.UserCacheDir()/trustabl/rules/<sha>/`. The rulebook exists so a human can
+look up *why* a rule fires (the threat model and references) without reading the
+engine source.
 
-To pin a local checkout (for iteration on rule edits), point the engine at
-this directory via its rules-path flag. See the trustabl engine README for
-the exact flag name.
+To run a scan against a different rules pack or pin a version, point the
+**engine** at a `trustabl-rules` repository/ref with `--rules-repo` /
+`--rules-ref` (or the `TRUSTABL_RULES_REPO` env var); `--no-rules-update` uses
+the local cache only. See the trustabl engine README for the full flag list.
 
 ## Contributing a rule
 
-1. Read [CLAUDE.md](CLAUDE.md) for the rule-authoring contract — required
-   fields, per-scope `applies_to` values, ID conventions, severity guidance.
-2. Copy the template from
-   [docs/policy-rationale-doc-template-guide.md](docs/policy-rationale-doc-template-guide.md)
-   and fill every section.
-3. Add the YAML rule under `<sdk>/<topic>.yaml` and the paired rationale at
+A rule spans three repos. The YAML lives in `trustabl-rules`; the rationale
+doc lives here; the test mirror lives in the engine.
+
+1. Read the rule-authoring contract in
+   [trustabl-rules/CLAUDE.md](https://github.com/trustabl/trustabl-rules/blob/main/CLAUDE.md)
+   — required fields, per-scope `applies_to` values, ID conventions, severity
+   guidance.
+2. Add the YAML rule to `trustabl-rules` under `<sdk>/<topic>.yaml`.
+3. Copy the template from
+   [docs/policy-rationale-doc-template-guide.md](docs/policy-rationale-doc-template-guide.md),
+   fill every section, and add the paired rationale **here** at
    `docs/Policy/<sdk>/<topic>.md`.
 4. Mirror the rule into the engine repo's `testdata/rules-fixture/` with at
-   least one fire case and one silent case (see CLAUDE.md "Add a rule for X").
-5. Open a PR. The rule appears in [POLICY_INDEX.md](POLICY_INDEX.md) once
-   merged.
+   least one fire case and one silent case (see the engine's
+   `testdata/rules-fixture/CLAUDE.md`, "Add a rule for X").
+5. Open the PRs. The rule appears in [POLICY_INDEX.md](POLICY_INDEX.md) once
+   the rulebook PR merges.
 
 ## Companion repos
 
