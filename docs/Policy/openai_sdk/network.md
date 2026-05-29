@@ -1,6 +1,6 @@
 # Policy Rationale: Network
 
-**Policy ID:** `OAI-policy`  
+**Policy ID:** `openai_sdk_network`  
 **File:** `openai_sdk/network.yaml`  
 **Rules:** OAI-011  
 **Severities:** high  

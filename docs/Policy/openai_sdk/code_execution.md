@@ -1,6 +1,6 @@
 # Policy Rationale: Code Execution
 
-**Policy ID:** `OAI-policy`  
+**Policy ID:** `openai_sdk_code_execution`  
 **File:** `openai_sdk/code_execution.yaml`  
 **Rules:** OAI-013  
 **Severities:** high  
@@ -11,7 +11,7 @@
 
 ## What this policy covers
 
-This policy targets OpenAI Agents SDK `@function_tool` bodies that invoke Python's dynamic-code primitives: `eval(...)`, `exec(...)`, and `compile(...)`. The detection is a `has_body_text` literal-substring scan; the rule fires on any `@function_tool` whose body source contains `exec(`, `eval(`, or `compile(`.
+This policy targets OpenAI Agents SDK `@function_tool` bodies that invoke Python's dynamic-code primitives: `eval(...)`, `exec(...)`, and `compile(...)`. The detection is the structured `has_code_exec_call` predicate: it walks the function's AST and fires on any call whose callee is the bare builtin `eval`, `exec`, or `compile`. Because it matches the callee symbol rather than a substring, an attribute call such as `re.compile(...)` does not fire.
 
 ---
 
@@ -32,7 +32,7 @@ The blast radius extends past one tool call because the agent process holds stat
 ### OAI-013 — Tool body calls eval/exec/compile on dynamic input (Severity: high, Confidence: 0.9, Fix type: code)
 
 **What we detect:**
-A `@function_tool`-decorated function whose body source literally contains `eval(`, `exec(`, or `compile(`. The match is unconditional on the argument — we do not attempt to determine whether the input string is model-supplied, since in an agent tool the conservative assumption is that any string parameter eventually is.
+A `@function_tool`-decorated function whose body calls the bare builtin `eval`, `exec`, or `compile` (predicate `has_code_exec_call`, an AST call-node walk on the callee symbol). The match is unconditional on the argument — we do not attempt to determine whether the input string is model-supplied, since in an agent tool the conservative assumption is that any string parameter eventually is. Attribute calls that merely share a name, such as `re.compile`, are not matched.
 
 **Why it is flaggable:**
 Dynamic-code primitives inside a tool body are a near-universal foot-gun. Even when the immediate argument is a constant, the presence of `exec`/`eval` in the surface signals a design choice to interpret strings as code — a pattern the model can usually exploit later via a related parameter, a config file the model writes, or a follow-up turn.
@@ -48,7 +48,7 @@ The rule sits one tier below "critical" only because the engine's severity scale
 Removing `eval`/`exec`/`compile` requires editing the tool source. No hook, sandbox kwarg, or guardrail prevents an in-process call from executing once dispatched.
 
 **Confidence 0.9:**
-False positives: a tool that contains `compile(` for `re.compile(...)` will not match because `re.compile` is a method on the `re` module and the literal scan is `compile(` at any position. In practice this is a small over-match (we accept `re.compile(...)` as a false positive trigger because the regex-compile use case is rare inside `@function_tool` bodies and the cost of inspection is low). False negatives: dynamic eval through `__import__("builtins").exec(...)`, `types.FunctionType(compile(...), ...)`, or other indirection escape the literal scan. The 0.9 number reflects that on the patterns the rule does detect, the security verdict is rarely wrong.
+False positives: the common lookalike `re.compile(...)` does **not** fire, because the predicate matches the bare builtin callee `compile`, not any callee whose text contains `compile`. (This *was* a false positive under the earlier substring-based detection; moving to `has_code_exec_call` eliminated it.) A tool that genuinely calls the `eval`/`exec`/`compile` builtins fires regardless of whether the argument is a constant — intentional, per the conservative model-reachability assumption above. False negatives: indirect execution through `__import__("builtins").exec(...)`, `getattr(builtins, "ex" + "ec")(s)`, or `types.FunctionType(compile(...), ...)` uses callees the predicate does not resolve. The 0.9 number reflects that on the patterns the rule does detect, the security verdict is rarely wrong.
 
 ---
 
@@ -59,6 +59,7 @@ False positives: a tool that contains `compile(` for `re.compile(...)` will not 
 - `pickle.loads(...)` on model-supplied bytes — a separate deserialization concern.
 - Whether the code being exec'd is *actually* model-supplied. The rule fires even on a constant exec; review judges intent.
 - Sandboxed `exec` (e.g. RestrictedPython, asteval). These reduce risk but the rule does not detect them; that is intentional — sandboxed in-process exec is still a strong-warning pattern.
+- AST-allow-listed evaluation. The safe pattern in *Recommendations* below still calls the `compile` and `eval` builtins, so it **fires the rule** — the rule flags the primitive, and a reviewer confirms the AST gate makes the specific use safe. This is an accepted fire-on-safe-code case, not a bug.
 
 ---
 

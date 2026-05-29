@@ -1,6 +1,6 @@
 # Policy Rationale: Shell Safety
 
-**Policy ID:** `OAI-policy`  
+**Policy ID:** `openai_sdk_shell_safety`  
 **File:** `openai_sdk/shell_safety.yaml`  
 **Rules:** OAI-012  
 **Severities:** high  
@@ -11,7 +11,7 @@
 
 ## What this policy covers
 
-This policy targets OpenAI Agents SDK `@function_tool` bodies that spawn OS processes. The detection is a `has_body_text` scan for the canonical Python process-spawn entry points: `subprocess.run(`, `subprocess.Popen(`, `subprocess.call(`, `subprocess.check_output(`, `subprocess.check_call(`, `os.system(`, `os.popen(`, and the `os.spawn*` family. Any literal match inside a discovered `@function_tool` body fires the rule.
+This policy targets OpenAI Agents SDK `@function_tool` bodies that spawn OS processes. The detection is the structured `has_shell_call` predicate: it walks the function's AST and fires on any call whose resolved callee is `os.system`, `os.popen`, a `subprocess.*` member (`subprocess.run`, `.Popen`, `.call`, `.check_output`, `.check_call`, …), or an `os.spawn*` member. Because it matches the resolved callee rather than raw text, a `subprocess.run(` mentioned in a comment or docstring does not fire.
 
 ---
 
@@ -32,7 +32,7 @@ This is why OWASP LLM Top 10:2025 places "Excessive Agency" (LLM06) at the cente
 ### OAI-012 — Tool body spawns a subprocess (Severity: high, Confidence: 0.9, Fix type: code)
 
 **What we detect:**
-A `@function_tool`-decorated function whose body literal text contains any of: `subprocess.run(`, `subprocess.Popen(`, `subprocess.call(`, `subprocess.check_output(`, `subprocess.check_call(`, `os.system(`, `os.popen(`, or `os.spawn`. The match is a substring search against the function body source.
+A `@function_tool`-decorated function whose body calls `os.system`, `os.popen`, any `subprocess.*` function (e.g. `subprocess.run`, `subprocess.Popen`, `subprocess.call`, `subprocess.check_output`, `subprocess.check_call`), or any `os.spawn*` function. The match is an AST call-node walk (predicate `has_shell_call`) that resolves the callee — not a substring scan — so a string literal or comment containing `subprocess.run(` does not trigger it.
 
 **Why it is flaggable:**
 Process spawn from inside an agent-callable tool puts the OS shell on the model's tool surface. Every safeguard (sandbox, deny-list, working-directory pin) is bolted on top of an inherently broad primitive; the rule fires unconditionally because the *presence* of process spawn is the signal.
@@ -48,7 +48,7 @@ The fix usually requires removing process spawn from the tool altogether or whol
 Replacing `subprocess.run(...)` with a library call (or fronting it with an allow-list) is a tool-source edit. A sandbox at the agent level (seccomp, container) is complementary but is not what the rule asks for.
 
 **Confidence 0.9:**
-False positives: a tool that imports `subprocess` only to call `subprocess.list2cmdline(...)` for quoting (no actual spawn) would not match — the literal `subprocess.run(` etc. is specific. A tool that uses `subprocess.run(["echo", "hi"])` is detected; whether the spawn is *safe* in context is a human judgment the rule does not make. False negatives: tools that spawn via `multiprocessing.Process`, `asyncio.create_subprocess_exec`, or shell-out via `pty.spawn` are not in the callee list. Tools that wrap subprocess behind a helper (`_run_safely(...)`) defined in another module also escape detection.
+False positives: the predicate matches any `subprocess.*` callee by prefix, so a tool that imports `subprocess` only to call the non-spawning helper `subprocess.list2cmdline(...)` will fire even though it never spawns — a small over-match we accept because that helper rarely appears without a real spawn nearby. Whether a genuine `subprocess.run(["echo", "hi"])` is *safe* in context is a human judgment the rule does not make. The AST match removes a class of false positive that substring scanning had: a `subprocess.run(` inside a comment or docstring no longer fires. False negatives: tools that spawn via `multiprocessing.Process`, `asyncio.create_subprocess_exec`, the `os.exec*` family, or `pty.spawn` are not in the callee set, and a spawn wrapped behind a helper (`_run_safely(...)`) defined in another module escapes the body-only walk.
 
 ---
 
