@@ -182,10 +182,9 @@ fails loudly rather than silently breaching anything.
 an explicit `input_schema=` (JSON Schema dict or Pydantic model).
 
 **Confidence 0.8:** a tool that genuinely uses a documented `input_schema` yet
-still names a `kwargs` param could fire. Engine note: discovery currently surfaces
-only a *plain* param named `kwargs`, not the `**kwargs` splat, so the rule
-under-fires on real `**kwargs` until `astutil.FunctionParams` captures splat
-params — a known limitation.
+still names a `kwargs` param could fire. Discovery surfaces the `**kwargs` splat
+name (as well as a plain param named `kwargs`), so the rule fires on a real
+`**kwargs` signature.
 
 ---
 
