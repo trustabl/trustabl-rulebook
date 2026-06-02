@@ -1,0 +1,6 @@
+# Generated book artifacts (the PDF is built from the rule pack, never committed).
+/build/
+
+# Python
+__pycache__/
+*.pyc

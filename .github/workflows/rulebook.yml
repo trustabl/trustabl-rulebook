@@ -1,0 +1,91 @@
+name: rulebook
+
+# Keeps the rulebook from drifting from the shipped rule pack and builds the PDF.
+# The gates clone trustabl-rules alongside this repo and validate the docs +
+# index against it. If trustabl-rules is PRIVATE, set the RULES_REPO_TOKEN secret
+# to a PAT with read access; for a public pack the default token is enough.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rulebook-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  consistency:
+    name: Consistency (docs + index vs pack)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rulebook
+        uses: actions/checkout@v4
+
+      - name: Checkout trustabl-rules
+        uses: actions/checkout@v4
+        with:
+          repository: trustabl/trustabl-rules
+          path: .rules
+          token: ${{ secrets.RULES_REPO_TOKEN || github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml
+
+      # Every shipped rule has a rationale doc whose severity/confidence/scope
+      # matches the pack. --strict also fails on any doc missing front-matter.
+      - name: Consistency gate
+        run: python tools/check_rulebook.py --rules-repo .rules --strict
+
+      # The committed POLICY_INDEX files match what the generator would produce.
+      - name: Index is up to date
+        run: python tools/gen_index.py --rules-repo .rules --check
+
+      # The book assembles (front-matter strips, no missing chapters).
+      - name: Assemble book (smoke test)
+        run: python tools/build_book.py --rules-repo .rules --out build/trustabl-rulebook.md
+
+  build-pdf:
+    name: Build PDF
+    needs: consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rulebook
+        uses: actions/checkout@v4
+
+      - name: Checkout trustabl-rules
+        uses: actions/checkout@v4
+        with:
+          repository: trustabl/trustabl-rules
+          path: .rules
+          token: ${{ secrets.RULES_REPO_TOKEN || github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml
+
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Install tectonic (self-contained LaTeX)
+        run: |
+          curl -fsSL https://drop-sh.fullyjustified.net | sh
+          sudo mv tectonic /usr/local/bin/
+
+      - name: Build PDF
+        run: make book RULES_REPO=.rules PDF_ENGINE=tectonic
+
+      - name: Upload PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: trustabl-rulebook-pdf
+          path: build/trustabl-rulebook.pdf
+          if-no-files-found: error

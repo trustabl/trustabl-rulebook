@@ -1,0 +1,28 @@
+# Pandoc defaults for building the Trustabl Rulebook PDF.
+# Usage: pandoc --defaults=tools/book/pandoc.yaml --pdf-engine=<engine> \
+#               -o build/trustabl-rulebook.pdf build/trustabl-rulebook.md
+#
+# A LaTeX engine is required (xelatex / lualatex / tectonic). The engine is
+# passed on the command line (see the Makefile) so this file stays portable.
+
+from: markdown
+to: pdf
+
+toc: true
+toc-depth: 2
+number-sections: true
+top-level-division: chapter   # `#` -> chapter; \part{} groups by SDK
+
+variables:
+  documentclass: report
+  title: "The Trustabl Rulebook"
+  subtitle: "The detection rules behind production-ready agentic tools"
+  author: "Trustabl"
+  date: "2026 Edition"
+  lang: en
+  geometry: "margin=1in"
+  fontsize: 11pt
+  linkcolor: teal
+  urlcolor: teal
+  toccolor: black
+  colorlinks: true

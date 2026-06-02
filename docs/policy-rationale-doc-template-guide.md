@@ -10,6 +10,42 @@ Mirror the YAML directory structure exactly. Create the `.md` at the same time a
 
 ---
 
+## Required front-matter (machine-checked)
+
+Every rationale doc MUST begin with a YAML front-matter block. This is the
+**authoritative, machine-readable** metadata — the consistency gate
+(`tools/check_rulebook.py`) parses it to verify the doc against the shipped rule
+pack and to generate the index/appendix. The human-readable `**Policy ID:** …`
+header below it is a rendered convenience; the front-matter is the source.
+
+```yaml
+---
+policy_id: openai_sdk_ssrf        # MUST equal policy.id in the paired YAML
+category: openai_sdk              # MUST equal the YAML category / directory
+topic: ssrf                       # MUST equal the YAML file basename (ssrf.yaml)
+rules:                            # one entry per rule in the policy file
+  - id: OAI-016
+    severity: high               # MUST match the rule's YAML severity
+    confidence: 0.6              # MUST match the rule's YAML confidence
+    scope: tool                  # MUST match the rule's YAML scope (default: tool)
+    fix_type: code               # editorial: config | code (see note below)
+references: [LLM06, LLM02]        # OWASP LLM Top 10:2025 IDs
+---
+```
+
+The gate fails CI when: a shipped rule has no doc covering it (COVERAGE), a
+doc's `severity`/`confidence`/`scope` disagree with the YAML (CONSISTENCY), or a
+rule is documented in the wrong `category`/`topic` or no longer exists
+(PLACEMENT). Run it locally with `python tools/check_rulebook.py`.
+
+> **`fix_type` and `references` are editorial.** The engine's rule schema
+> (`RuleDef`) does not model either field today, so the gate validates their
+> *shape* (fix_type ∈ {config, code}) but cannot cross-check them against the
+> pack. Do not claim in prose that the engine prioritizes config fixes in scan
+> output until that field actually lands in the schema.
+
+---
+
 ## Template
 
 Copy this verbatim. Fill every section. Delete no sections.
