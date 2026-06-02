@@ -13,17 +13,27 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
-references: [LLM10]
+  - id: OAI-016
+    severity: high
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+  - id: OAI-018
+    severity: medium
+    confidence: 0.55
+    scope: tool
+    fix_type: code
+references: [LLM10, LLM06, LLM02]
 ---
 
 # Policy Rationale: Network
 
 **Policy ID:** `openai_sdk_network`  
 **File:** `openai_sdk/network.yaml`  
-**Rules:** OAI-005, OAI-011  
-**Severities:** high  
-**Fix types:** code  
-**References:** LLM10
+**Rules:** OAI-005, OAI-011, OAI-016, OAI-018  
+**Severities:** high, high, high, medium  
+**Fix types:** code, code, code, code  
+**References:** LLM10, LLM06, LLM02
 
 ---
 
@@ -85,6 +95,60 @@ The fix is a source-level `timeout=N` kwarg on the call. No hook or sandbox para
 
 **Confidence 0.85:**
 False positives: code that wraps `urlopen` behind a helper that injects a timeout (`def safe_urlopen(req): return urlopen(req, timeout=10)` — then a caller writing `safe_urlopen(req)` is safe but undetected). False negatives: positional call `urlopen(req, None, 10)` passes timeout positionally, which the `call_without_kwarg` predicate does not see — but the convention overwhelmingly favors the kwarg form.
+
+---
+
+### OAI-016 — TypeScript tool fetch call has no AbortSignal timeout (Severity: high, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a TypeScript tool body that calls `fetch(` with no
+`AbortSignal` / `AbortController` / `signal:` / `AbortSignal.timeout` present
+(`has_body_text` for `fetch(` AND `not has_body_text` for the abort markers).
+
+**Why it is flaggable:** Node's and the browser's `fetch` have no implicit
+timeout; a slow host blocks the tool's `execute` callback — and the agent run
+loop — indefinitely, burning the turn's wall-clock budget and tying up the worker.
+Because these templates often interpolate the URL from tool arguments, the
+un-cancellable call also amplifies SSRF/exfiltration impact.
+
+**Real-world consequence:** a TS `web_fetch` tool hangs the whole agent turn when
+the model supplies a slow or hostile URL.
+
+**Why severity is high and not medium:** the failure denies the agent loop, with
+no in-band mitigation short of an explicit signal.
+
+**Fix type — code:** pass `signal: AbortSignal.timeout(ms)` (or an
+`AbortController`) to `fetch`.
+
+**Confidence 0.6:** `has_body_text` is a brittle substring check — it can miss a
+timeout wired through a wrapper, or fire when the abort lives in a helper.
+
+**Provisional (TypeScript):** this rule loads and validates today but will not
+fire until the engine's TypeScript tool parser ships; it is load-validated only.
+
+### OAI-018 — Tool builds outbound URL from non-literal value (Severity: medium, Confidence: 0.55, Fix type: code)
+
+**What we detect:** an `@function_tool` body that issues an HTTP request whose URL
+is built from a non-literal value (`has_dynamic_url_call: true`).
+
+**Why it is flaggable:** tool arguments are model-produced, so a model-controlled
+URL can be steered at an attacker host or an internal address the egress can reach
+(SSRF), and the request body (auth headers, payload) leaks to whatever the URL
+resolves to.
+
+**Real-world consequence:** a tool that interpolates a model-supplied
+`connection_id` into a base URL is pointed at the cloud metadata endpoint or an
+internal service. See [claude_sdk/ssrf.md](../claude_sdk/ssrf.md) for the full SSRF
+threat model.
+
+**Why severity is medium and not high:** the OpenAI variant is scored slightly
+lower than the Claude/ADK SSRF rules pending corpus calibration; the exploit path
+is the same, conditional on the host's network position.
+
+**Fix type — code:** validate the model-supplied value against a host allow-list,
+or look it up in a server-side registry and build the URL from the trusted entry.
+
+**Confidence 0.55:** many tools build URLs from validated IDs; the predicate cannot
+see validation that lives in another module (false positive).
 
 ---
 

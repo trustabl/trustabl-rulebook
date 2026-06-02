@@ -8,6 +8,11 @@ rules:
     confidence: 0.55
     scope: tool
     fix_type: code
+  - id: OAI-019
+    severity: medium
+    confidence: 0.5
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM06]
 
 **Policy ID:** `openai_sdk_idempotency`  
 **File:** `openai_sdk/idempotency.yaml`  
-**Rules:** OAI-009  
-**Severities:** medium  
-**Fix types:** code  
+**Rules:** OAI-009, OAI-019  
+**Severities:** medium, medium  
+**Fix types:** code, code  
 **References:** LLM06
 
 > **Read [claude_sdk/idempotency.md](../claude_sdk/idempotency.md) for the full threat model.**
@@ -69,6 +74,36 @@ and the backend not deduping by other means.
 **Confidence 0.55:** the pack's lowest by design — backend-enforced idempotency,
 non-mutating verbs, and keys named outside the heuristic are all common false
 positives. A review prompt, not a verdict.
+
+---
+
+### OAI-019 — TypeScript mutating tool has no idempotency key (Severity: medium, Confidence: 0.5, Fix type: code)
+
+**What we detect:** a TS tool whose name starts with a mutating verb
+(`create_` / `send_` / `delete_` / `post_` / `update_` / `refund_` / `charge_` /
+`issue_`) and whose body mentions no idempotency-key marker (`idempot` /
+`request_id` / `requestId` / `txn_id` / `correlation_id` / …).
+
+**Why it is flaggable:** agents retry, and a mutating tool with no dedupe key
+double-fires the side effect on a retry — the timeout double-spend. See
+[claude_sdk/idempotency.md](../claude_sdk/idempotency.md) for the full threat
+model.
+
+**Real-world consequence:** a TS `charge_card` retried after a lost response bills
+the customer twice.
+
+**Why severity is medium and not high:** real but conditional on a retry occurring
+and the backend not deduping by other means.
+
+**Fix type — code:** thread an idempotency key from the tool through to the
+backend and honor it on repeat.
+
+**Confidence 0.5:** the lowest in the pack — backend-enforced idempotency and keys
+named outside the marker set are common false positives, and `has_body_text` is a
+substring heuristic.
+
+**Provisional (TypeScript):** load-validated today; will not fire until the
+engine's TypeScript tool parser ships.
 
 ---
 

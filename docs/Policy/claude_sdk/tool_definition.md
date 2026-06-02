@@ -18,6 +18,11 @@ rules:
     confidence: 0.9
     scope: tool
     fix_type: code
+  - id: CSDK-008
+    severity: medium
+    confidence: 0.8
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -25,9 +30,9 @@ references: [LLM06]
 
 **Policy ID:** `claude_sdk_tool_definition`  
 **File:** `claude_sdk/tool_definition.yaml`  
-**Rules:** CSDK-001, CSDK-002, CSDK-007  
-**Severities:** low, medium, low  
-**Fix types:** code, code, code  
+**Rules:** CSDK-001, CSDK-002, CSDK-007, CSDK-008  
+**Severities:** low, medium, low, medium  
+**Fix types:** code, code, code, code  
 **References:** LLM06
 
 ---
@@ -152,6 +157,35 @@ edit.
 **Confidence 0.9:**
 The name list is curated, so matches are deliberate; the small false-positive
 space is a domain where `run` is genuinely descriptive (rare).
+
+---
+
+### CSDK-008 — Tool exposes **kwargs without explicit input_schema (Severity: medium, Confidence: 0.8, Fix type: code)
+
+**What we detect:** a tool whose accepted arguments live under `**kwargs` (a
+parameter named `kwargs`) with no `input_schema=` on the `@tool` decorator
+(`param_name_matches exact:[kwargs]` AND `not tool_decorator_kwarg_present:[input_schema]`).
+
+**Why it is flaggable:** the SDK derives the model-facing JSON schema from the
+signature; a `**kwargs`-only tool exposes an empty parameter object, so the model
+gets no signal about which keys to send.
+
+**Real-world consequence:** the model omits required keys or invents unhandled
+ones; the failure surfaces as a runtime `KeyError` at invoke time instead of a
+clean schema-validation error before the tool runs.
+
+**Why severity is medium and not low:** unlike a missing docstring this produces
+wrong-argument *execution*, not just mis-selection. Not high because it usually
+fails loudly rather than silently breaching anything.
+
+**Fix type — code:** declare each parameter on the signature with a type, or pass
+an explicit `input_schema=` (JSON Schema dict or Pydantic model).
+
+**Confidence 0.8:** a tool that genuinely uses a documented `input_schema` yet
+still names a `kwargs` param could fire. Engine note: discovery currently surfaces
+only a *plain* param named `kwargs`, not the `**kwargs` splat, so the rule
+under-fires on real `**kwargs` until `astutil.FunctionParams` captures splat
+params — a known limitation.
 
 ---
 

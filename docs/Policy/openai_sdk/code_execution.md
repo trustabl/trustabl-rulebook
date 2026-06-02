@@ -8,6 +8,11 @@ rules:
     confidence: 0.9
     scope: tool
     fix_type: code
+  - id: OAI-017
+    severity: high
+    confidence: 0.9
+    scope: tool
+    fix_type: code
 references: [LLM05, LLM06]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM05, LLM06]
 
 **Policy ID:** `openai_sdk_code_execution`  
 **File:** `openai_sdk/code_execution.yaml`  
-**Rules:** OAI-013  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** OAI-013, OAI-017  
+**Severities:** high, high  
+**Fix types:** code, code  
 **References:** LLM05, LLM06
 
 ---
@@ -62,6 +67,35 @@ Removing `eval`/`exec`/`compile` requires editing the tool source. No hook, sand
 
 **Confidence 0.9:**
 False positives: the common lookalike `re.compile(...)` does **not** fire, because the predicate matches the bare builtin callee `compile`, not any callee whose text contains `compile`. (This *was* a false positive under the earlier substring-based detection; moving to `has_code_exec_call` eliminated it.) A tool that genuinely calls the `eval`/`exec`/`compile` builtins fires regardless of whether the argument is a constant — intentional, per the conservative model-reachability assumption above. False negatives: indirect execution through `__import__("builtins").exec(...)`, `getattr(builtins, "ex" + "ec")(s)`, or `types.FunctionType(compile(...), ...)` uses callees the predicate does not resolve. The 0.9 number reflects that on the patterns the rule does detect, the security verdict is rarely wrong.
+
+---
+
+### OAI-017 — TypeScript tool body calls eval / new Function on dynamic input (Severity: high, Confidence: 0.9, Fix type: code)
+
+**What we detect:** a TypeScript tool body that calls `eval(`, `new Function(`, or
+`Function(` (`has_body_text`).
+
+**Why it is flaggable:** when any part of the evaluated string flows from the
+model, this is arbitrary code execution inside the Node / Worker / browser runtime
+— file I/O, env vars, fetch credentials, and the agent's keys in memory are all
+reachable, and `with({})`-style sandboxes are escapable via `globalThis` and
+prototype chains.
+
+**Real-world consequence:** a TS `calculate` tool that feeds a tool argument into
+`eval` as a math evaluator is the canonical RCE shape.
+
+**Why severity is high and not medium:** no in-band sandbox; the only reliable fix
+is removing dynamic evaluation.
+
+**Fix type — code:** remove `eval` / `new Function`; parse arithmetic with a real
+expression parser, or run untrusted code in an isolate with no ambient
+capabilities.
+
+**Confidence 0.9:** `has_body_text` for `eval(` / `Function(` is high-precision for
+this class, though it can fire on a comment.
+
+**Provisional (TypeScript):** load-validated today; will not fire until the
+engine's TypeScript tool parser ships.
 
 ---
 

@@ -18,6 +18,11 @@ rules:
     confidence: 0.9
     scope: tool
     fix_type: code
+  - id: ADK-009
+    severity: low
+    confidence: 0.7
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -25,9 +30,9 @@ references: [LLM06]
 
 **Policy ID:** `google_adk_tool_definition`  
 **File:** `google_adk/tool_definition.yaml`  
-**Rules:** ADK-001, ADK-002, ADK-007  
-**Severities:** low, medium, low  
-**Fix types:** code, code, code  
+**Rules:** ADK-001, ADK-002, ADK-007, ADK-009  
+**Severities:** low, medium, low, low  
+**Fix types:** code, code, code, code  
 **References:** LLM06
 
 > **Read [claude_sdk/tool_definition.md](../claude_sdk/tool_definition.md) for the full threat model.**
@@ -82,6 +87,33 @@ tool whose schema comes from a Pydantic model elsewhere may be a false positive.
 routing signal. **Real-world consequence:** `run`/`process` are a coin-flip for
 the router. **Why low not medium:** a clear docstring compensates. **Fix type —
 code:** rename to verb-noun. **Confidence 0.9:** curated name list.
+
+---
+
+### ADK-009 — FunctionTool body prints to stdout (Severity: low, Confidence: 0.7, Fix type: code)
+
+**What we detect:** a `FunctionTool`-wrapped body that calls `print(...)`
+(`has_body_text: [print(]`).
+
+**Why it is flaggable:** ADK tools share the runtime's stdout, so `print` debug
+tracing leaks raw arguments (paths, IDs, decoded blobs) into the structured-log
+stream, mangles JSON log lines, and can echo secrets from `tool_context.state`
+into scrollback or log shippers. The output is also invisible to the model —
+`print` writes go to the process, not the tool response.
+
+**Real-world consequence:** a debug `print(user_record)` left in a shipped tool
+writes PII into the container logs on every call.
+
+**Why severity is low and not medium:** an observability/hygiene leak, not a
+direct breach; impact depends on what is printed.
+
+**Fix type — code:** delete the `print`, or replace it with a module logger
+(`logging.getLogger(__name__).debug(...)`); if the data is for the model, return
+it in the tool's structured result.
+
+**Confidence 0.7:** `has_body_text` is a substring match, so `print(` inside a
+string literal or comment can false-positive, and a non-`print` stdout write
+(e.g. `sys.stdout.write`) is a false negative.
 
 ---
 
