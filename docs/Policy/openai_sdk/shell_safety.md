@@ -1,3 +1,16 @@
+---
+policy_id: openai_sdk_shell_safety
+category: openai_sdk
+topic: shell_safety
+rules:
+  - id: OAI-012
+    severity: high
+    confidence: 0.9
+    scope: tool
+    fix_type: code
+references: [LLM06, LLM05]
+---
+
 # Policy Rationale: Shell Safety
 
 **Policy ID:** `openai_sdk_shell_safety`  

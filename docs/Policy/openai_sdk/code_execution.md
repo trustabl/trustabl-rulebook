@@ -1,3 +1,16 @@
+---
+policy_id: openai_sdk_code_execution
+category: openai_sdk
+topic: code_execution
+rules:
+  - id: OAI-013
+    severity: high
+    confidence: 0.9
+    scope: tool
+    fix_type: code
+references: [LLM05, LLM06]
+---
+
 # Policy Rationale: Code Execution
 
 **Policy ID:** `openai_sdk_code_execution`  

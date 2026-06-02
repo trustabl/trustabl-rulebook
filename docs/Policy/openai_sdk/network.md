@@ -1,8 +1,26 @@
+---
+policy_id: openai_sdk_network
+category: openai_sdk
+topic: network
+rules:
+  - id: OAI-005
+    severity: high
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: OAI-011
+    severity: high
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+references: [LLM10]
+---
+
 # Policy Rationale: Network
 
 **Policy ID:** `openai_sdk_network`  
 **File:** `openai_sdk/network.yaml`  
-**Rules:** OAI-011  
+**Rules:** OAI-005, OAI-011  
 **Severities:** high  
 **Fix types:** code  
 **References:** LLM10

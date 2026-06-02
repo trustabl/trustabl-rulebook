@@ -1,3 +1,16 @@
+---
+policy_id: openai_sdk_observability
+category: openai_sdk
+topic: observability
+rules:
+  - id: OAI-010
+    severity: low
+    confidence: 0.65
+    scope: tool
+    fix_type: code
+references: [LLM02]
+---
+
 # Policy Rationale: Observability Hygiene
 
 **Policy ID:** `openai_sdk_observability`  
