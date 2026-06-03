@@ -72,8 +72,13 @@ False positives: the common lookalike `re.compile(...)` does **not** fire, becau
 
 ### OAI-017 — TypeScript tool body calls eval / new Function on dynamic input (Severity: high, Confidence: 0.9, Fix type: code)
 
-**What we detect:** a TypeScript tool body that calls `eval(`, `new Function(`, or
-`Function(` (`has_body_text`).
+**What we detect:** a TypeScript tool body that calls the bare `eval` builtin or
+constructs a `new Function(...)`, detected by the structured `has_code_exec_call`
+predicate. During discovery `tsHandlerFacts` stamps a `code_exec` fact when it sees
+a bare `eval` callee or a `new Function` expression; `has_code_exec_call` reads
+that fact for TypeScript (and walks the AST for the Python `eval`/`exec`/`compile`
+builtins). Because it matches the callee/constructor rather than a substring, the
+name in a comment or string literal does not fire it.
 
 **Why it is flaggable:** when any part of the evaluated string flows from the
 model, this is arbitrary code execution inside the Node / Worker / browser runtime
@@ -91,11 +96,11 @@ is removing dynamic evaluation.
 expression parser, or run untrusted code in an isolate with no ambient
 capabilities.
 
-**Confidence 0.9:** `has_body_text` for `eval(` / `Function(` is high-precision for
-this class, though it can fire on a comment.
-
-**Provisional (TypeScript):** load-validated today; will not fire until the
-engine's TypeScript tool parser ships.
+**Confidence 0.9:** the structured `has_code_exec_call` match is high-precision for
+this class — it keys on the bare `eval` callee and the `new Function` constructor,
+so it does not fire on the name in a comment or string. False negatives: a bare
+`Function(...)` call without `new`, or dynamic-eval reached through an aliased or
+property-access callee, is not seen.
 
 ---
 

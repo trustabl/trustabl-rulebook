@@ -102,14 +102,18 @@ which is why containment lives in the recommendations.
 ### CSDK-012 — TypeScript Claude SDK tool writes to the filesystem (Severity: medium, Confidence: 0.5, Fix type: code)
 
 **What we detect:**
-A TypeScript Claude SDK `tool(...)` whose handler body contains any of the
-substrings `writeFileSync(`, `writeFile(`, or `createWriteStream(` (predicate
-`has_body_text` — a literal substring scan over the handler's source span). This
-is a **coarse** signal: it fires on the *presence of a filesystem write*, not on a
-write of an unnormalized or model-controlled path. Unlike the Python sibling
-CSDK-004, there is **no** path-flow analysis behind it — TS per-parameter
-path-normalization tracking is not wired, so the rule cannot tell a write to a
-fixed, safe path from a write to a model-supplied one.
+A TypeScript Claude SDK `tool(...)` whose handler body invokes a filesystem-write
+API — `writeFile`, `writeFileSync`, `appendFile`, `appendFileSync`, or
+`createWriteStream`, bare or under an `fs.*` / `fsPromises.*` namespace — detected
+by the structured `has_write_call` predicate (during discovery `tsHandlerFacts`
+stamps a `writes_fs` fact on the recognized callees; `has_write_call` reads it for
+TypeScript). It is a callee match, not a substring scan, so the name in a comment
+or string literal does not fire it. The signal is still deliberately **coarse**:
+it fires on the *presence of a filesystem write*, not on a write of an
+unnormalized or model-controlled path. Unlike the Python sibling CSDK-004 there is
+**no** path-flow analysis behind it — TS per-parameter path-normalization tracking
+is not wired, so the rule cannot tell a write to a fixed, safe path from a write to
+a model-supplied one.
 
 **Why it is flaggable:**
 A filesystem write inside a model-callable tool is a candidate arbitrary-file
@@ -140,16 +144,16 @@ Confining writes to a working directory and resolving/validating the final path 
 an edit to the tool's own source.
 
 **Confidence 0.5:**
-The lowest in this file, and honestly so. Because the match is a bare substring
-scan with no path-flow analysis, the false-positive rate is high by construction:
-a write to a fixed literal path, a write whose path is fully developer-controlled,
-or even the substring `writeFile(` appearing in a comment or string in the handler
-span all fire. The 0.5 encodes "about half of these are likely benign — confirm
-the path or contents are model-influenced before acting." False negatives are also
-present: a write via `fs.promises.writeFile` aliased and renamed, `fs.appendFile`,
-`fs.open` + `write`, `fs.cp`, `fs.rename`, or a stream piped to a file all escape
-the substring set. This is the weakest rule of the five TS Claude rules and is
-labelled as such.
+The lowest in this file, and honestly so — but the reason is the *absence of
+path-flow analysis*, not substring imprecision (the structured callee match means
+a `writeFile(` in a comment or string literal no longer fires). The rule confirms
+a write API is present, not that its path is model-influenced, so a write to a
+fixed literal path or a fully developer-controlled path still fires. The 0.5
+encodes "about half of these are likely benign — confirm the path or contents are
+model-influenced before acting." False negatives remain: a write reached through a
+renamed alias whose callee text is not recognized, `fs.open` + `write`, `fs.cp`,
+`fs.rename`, or a stream piped to a file escape the recognized-callee set. This is
+the weakest rule of the TS Claude rules and is labelled as such.
 
 ---
 
@@ -164,9 +168,10 @@ labelled as such.
 - Symlink races (TOCTOU) between the resolve and the open.
 - (TypeScript, CSDK-012) Reads — the rule matches *write* APIs only, so a
   `readFileSync(modelPath)` arbitrary-read primitive does not fire.
-- (TypeScript, CSDK-012) Write APIs outside the substring set — `fs.appendFile`,
-  `fs.cp`, `fs.rename`, `fs.open` + `write`, `fsPromises.writeFile` under a renamed
-  alias, or a `pipe()` to a write stream.
+- (TypeScript, CSDK-012) Write APIs outside the recognized callee set — `fs.cp`,
+  `fs.rename`, `fs.open` + `write`, a write reached through a renamed alias, or a
+  `pipe()` to a write stream. (`appendFile`/`appendFileSync` and the `fs.*` /
+  `fsPromises.*` namespaced forms of the recognized writes are now caught.)
 - (TypeScript, CSDK-012) Path normalization or containment is **not** assessed at
   all: a TS tool that resolves and gates its write path correctly still fires
   (false positive), and a write to a model-controlled path satisfies nothing the

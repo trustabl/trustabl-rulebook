@@ -59,12 +59,15 @@ execution.
 ### CSDK-010 — TypeScript Claude SDK tool shells out to the OS (Severity: high, Confidence: 0.7, Fix type: code)
 
 **What we detect:**
-A TypeScript Claude SDK `tool(...)` whose handler body contains any of the
-substrings `child_process`, `execSync(`, `execFile(`, `spawn(`, or `spawnSync(`
-(predicate `has_body_text` — a literal substring scan over the handler's source
-span, **not** an AST or dataflow match). The `has_body_text` line-span match keys
-off the raw text of the handler body, so it fires on the presence of any of these
-strings anywhere in that span.
+A TypeScript Claude SDK `tool(...)` whose handler body invokes a child-process
+API — `exec`, `execSync`, `execFile`, `execFileSync`, `spawn`, `spawnSync`, or
+`fork`, whether called bare (from a destructured `const { exec } = ...`) or via a
+`child_process.*` namespace — detected by the structured `has_shell_call`
+predicate. During discovery `tsHandlerFacts` walks the handler AST and stamps a
+`shells_out` fact when it sees one of those callees; `has_shell_call` reads that
+fact for TypeScript (and walks the AST directly for Python). This is a callee
+match, **not** a substring scan, so the string appearing in a comment, an
+unrelated identifier, or a string literal does not fire it.
 
 **Why it is flaggable:**
 A child-process API in a model-callable tool puts OS process spawn on the model's
@@ -90,15 +93,15 @@ Replacing the spawn with a library call, or fronting it with an argv array and a
 allow-list, is an edit to the tool's own source.
 
 **Confidence 0.7:**
-Matches the Python sibling's 0.7, but the gap is differently shaped because the
-match is a coarse substring scan rather than a resolved-callee AST match. False
-positives: the substring `child_process` appears in a comment, an import that is
-never called, or a string literal in the handler span and still fires; a tool that
-legitimately wraps a single fixed command also fires. False negatives: a spawn
-reached via an alias whose call text is none of the listed substrings (e.g. a
-destructured-and-renamed `const { exec: run } = ...; run(...)`), or one hidden in a
-helper in another module, is not seen. The substring nature is the reason this is a
-review signal, not a verdict.
+Matches the Python sibling's 0.7 and now shares its mechanism (a structured
+callee match, not a substring scan). False positives: a tool that legitimately
+wraps a single fixed command still fires — the rule detects that the tool *shells
+out*, not that it does so unsafely. False negatives: a spawn reached via a
+renamed destructured alias (`const { exec: run } = ...; run(...)`) whose callee
+text matches none of the recognized names, or one hidden in a helper in another
+module, is not seen. The 0.7 reflects this "shells out at all" framing rather than
+any substring imprecision — the earlier substring detection's comment/string-literal
+false positives no longer apply.
 
 ### CSDK-108 — Tool body spawns a subprocess (Severity: high, Confidence: 0.7, Fix type: code)
 
@@ -140,18 +143,16 @@ For the Python rule (CSDK-108), identical to
 the `os.exec*` family, a spawn wrapped behind a helper in another module, and the
 question of whether a given literal command is safe.
 
-For the TypeScript rule (CSDK-010), the substring set is `child_process`,
-`execSync(`, `execFile(`, `spawn(`, `spawnSync(`, so these escape:
-- The bare `exec(` and `fork(` call forms — the substring list includes
-  `execSync(`/`execFile(`/`spawn(`/`spawnSync(` but not a bare `exec(` or `fork(`
-  with no qualifier (though `child_process` will still catch the common
-  import/namespace shape).
-- A child-process call reached through a renamed alias whose call text matches none
-  of the substrings, or one in a helper in another module.
-- Other process-spawning paths that do not contain the listed strings — e.g.
-  `Bun.spawn`, `Deno.Command`, `node:worker_threads`, or a native addon.
-- Whether a given literal command is actually safe (the substring presence is the
-  whole signal).
+For the TypeScript rule (CSDK-010), the recognized callees are `exec`,
+`execSync`, `execFile`, `execFileSync`, `spawn`, `spawnSync`, `fork` (bare or
+`child_process.*`-qualified), so these escape:
+- A child-process call reached through a renamed alias whose callee text matches
+  none of the recognized names (`const { exec: run } = ...; run(...)`), or one in
+  a helper in another module.
+- Other process-spawning paths whose callee is not in the set — e.g. `Bun.spawn`,
+  `Deno.Command`, `node:worker_threads`, or a native addon.
+- Whether a given literal command is actually safe (the rule's signal is that the
+  tool shells out at all, not that it does so unsafely).
 
 The HTTP-exfiltration path is covered by SSRF ([ssrf.md](ssrf.md), CSDK-009 /
 CSDK-013).

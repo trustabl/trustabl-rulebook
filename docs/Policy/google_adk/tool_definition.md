@@ -97,8 +97,10 @@ code:** rename to verb-noun. **Confidence 0.9:** curated name list.
 
 ### ADK-009 — FunctionTool body prints to stdout (Severity: low, Confidence: 0.7, Fix type: code)
 
-**What we detect:** a `FunctionTool`-wrapped body that calls `print(...)`
-(`has_body_text: [print(]`).
+**What we detect:** a `FunctionTool`-wrapped body that calls the bare `print`
+builtin, detected by the structured `has_print_call` predicate (an AST walk for a
+bare `print` callee — `pprint`, `sys.stdout.write`, and a `print` in a comment or
+string do not fire it).
 
 **Why it is flaggable:** ADK tools share the runtime's stdout, so `print` debug
 tracing leaks raw arguments (paths, IDs, decoded blobs) into the structured-log
@@ -116,9 +118,10 @@ direct breach; impact depends on what is printed.
 (`logging.getLogger(__name__).debug(...)`); if the data is for the model, return
 it in the tool's structured result.
 
-**Confidence 0.7:** `has_body_text` is a substring match, so `print(` inside a
-string literal or comment can false-positive, and a non-`print` stdout write
-(e.g. `sys.stdout.write`) is a false negative.
+**Confidence 0.7:** the structured `has_print_call` match keys on the bare `print`
+callee, so it does not false-positive on `print(` in a string literal or comment,
+nor on `pprint`. False negatives: a non-`print` stdout write (e.g.
+`sys.stdout.write`, `logging` at a too-low level) is not seen.
 
 ---
 
