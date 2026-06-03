@@ -27,7 +27,7 @@ rules:                            # one entry per rule in the policy file
   - id: OAI-016
     severity: high               # MUST match the rule's YAML severity
     confidence: 0.6              # MUST match the rule's YAML confidence
-    scope: tool                  # MUST match the rule's YAML scope (default: tool)
+    scope: tool                  # MUST match the rule's YAML scope (required; one of tool|agent|subagent|repo)
     fix_type: code               # editorial: config | code (see note below)
 references: [LLM06, LLM02]        # OWASP LLM Top 10:2025 IDs
 ---
