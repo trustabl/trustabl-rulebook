@@ -8,6 +8,11 @@ rules:
     confidence: 0.6
     scope: tool
     fix_type: code
+  - id: CSDK-013
+    severity: high
+    confidence: 0.6
+    scope: tool
+    fix_type: code
 references: [LLM06, LLM02]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM06, LLM02]
 
 **Policy ID:** `claude_sdk_ssrf`  
 **File:** `claude_sdk/ssrf.yaml`  
-**Rules:** CSDK-009  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** CSDK-009, CSDK-013  
+**Severities:** high, high  
+**Fix types:** code, code  
 **References:** LLM06, LLM02
 
 > This is the canonical SSRF rationale for the rulebook. The OpenAI (OAI-018) and
@@ -114,6 +119,58 @@ False negatives: a URL built in a helper, or assembled via `urljoin` from a
 model-controlled base, can evade the first-argument check. A strong lead to
 investigate, not a near-certain defect.
 
+### CSDK-013 — TypeScript Claude SDK tool fetches a caller-controlled URL (SSRF) (Severity: high, Confidence: 0.6, Fix type: code)
+
+**What we detect:**
+A TypeScript Claude SDK `tool(...)` whose handler issues an HTTP call to a URL
+that is not a plain string literal (predicate `has_dynamic_url_call`, backed by
+the structural `dynamic_url` fact in `ts_handler_facts.go`). The fact recognizes a
+fixed set of HTTP call callees — `fetch`, `axios` and its method forms
+(`axios.get`/`.post`/`.put`/`.delete`/`.patch`/`.request`), `got`/`got.get`/
+`got.post`, and `undici.fetch`/`undici.request` — and inspects the **first
+positional argument**. It fires when that argument is anything other than a plain
+string literal: an identifier (`fetch(url)`), a member expression
+(`fetch(opts.url)`), a string concatenation, a call expression, or a template
+string that contains a `${...}` substitution. A plain `"https://..."` literal, or
+a backtick template with no substitution, does not fire.
+
+**Why it is flaggable:**
+A non-literal URL argument means the destination host is, in practice, chosen by
+the model. The threat model is identical to the Python sibling
+[CSDK-009](#csdk-009--tool-fetches-a-caller-controlled-url-ssrf-severity-high-confidence-06-fix-type-code):
+the agent host typically sits inside a VPC with reach to the instance metadata
+service (`169.254.169.254`), loopback admin endpoints, and internal microservices
+that the public internet cannot address. The only delta is the client library
+(`fetch`/`axios`/`got`/`undici` vs Python `requests`/`httpx`).
+
+**Real-world consequence:**
+A `readPage(url: string)` web-reader tool, when prompt-injected, is asked to fetch
+`http://169.254.169.254/latest/meta-data/iam/security-credentials/<role>` via
+`fetch(url)`; the returned credentials land in the model context and from there
+into logs or the next turn.
+
+**Why severity is high and not medium:**
+The exploit needs no second vulnerability — one tool call against a reachable
+metadata or internal endpoint yields credentials or internal data. It is not
+critical because impact is conditional on the host's network position, and a
+correct host allow-list fully neutralizes it. Matches the Python sibling.
+
+**Fix type — code:**
+Constraining the destination (host allow-list, post-resolution IP checks, fixed
+base URL) is an edit to the tool's own source.
+
+**Confidence 0.6:**
+Matches the Python sibling's 0.6. False positives: a tool that fetches a
+parameter-supplied URL but validates it in a helper in another module still fires,
+since the fact sees only the handler body's first argument; the fact also cannot
+tell a genuinely public "fetch this page" tool from an internal one. False
+negatives that are TS-specific: an HTTP client not in the recognized callee set
+(`http.request`, `https.get`, `node-fetch` under a renamed import,
+`XMLHttpRequest`, a `new URL(...)` passed positionally), a URL placed in an options
+object rather than the first positional argument (`axios({ url })`,
+`fetch(req)` where `req` is a `Request`), or a URL assembled in a helper, all
+evade the first-argument check.
+
 ---
 
 ## What this policy does not cover
@@ -128,6 +185,11 @@ investigate, not a near-certain defect.
   302s to an internal address).
 - Whether the fetched content is itself dangerous (prompt injection in the
   response body) — an output-guardrail concern, not this rule.
+- (TypeScript, CSDK-013) HTTP clients outside the recognized callee set —
+  `http.request` / `https.get`, `node-fetch` under a renamed import,
+  `XMLHttpRequest`, and `superagent` — do not fire. A model-controlled URL passed
+  in an options object (`axios({ url })`) rather than as the first positional
+  argument also evades the first-argument check.
 
 ---
 

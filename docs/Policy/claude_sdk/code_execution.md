@@ -3,6 +3,11 @@ policy_id: claude_sdk_code_execution
 category: claude_sdk
 topic: code_execution
 rules:
+  - id: CSDK-011
+    severity: high
+    confidence: 0.9
+    scope: tool
+    fix_type: code
   - id: CSDK-107
     severity: high
     confidence: 0.85
@@ -15,9 +20,9 @@ references: [LLM05, LLM06]
 
 **Policy ID:** `claude_sdk_code_execution`  
 **File:** `claude_sdk/code_execution.yaml`  
-**Rules:** CSDK-107  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** CSDK-011, CSDK-107  
+**Severities:** high, high  
+**Fix types:** code, code  
 **References:** LLM05, LLM06
 
 > **Read [openai_sdk/code_execution.md](../openai_sdk/code_execution.md) for the full threat model.**
@@ -51,6 +56,55 @@ between the model and the `exec`.
 
 ## Rule-by-rule defense
 
+### CSDK-011 — TypeScript Claude SDK tool evaluates dynamic code (Severity: high, Confidence: 0.9, Fix type: code)
+
+**What we detect:**
+A TypeScript Claude Agent SDK `tool(...)` whose handler body calls the bare
+`eval()` builtin or constructs `new Function(...)` (predicate
+`has_code_exec_call`, backed by the structural `code_exec` fact in
+`ts_handler_facts.go`). The fact fires on two AST shapes only: a `call_expression`
+whose callee text is exactly `eval`, and a `new_expression` whose constructor
+identifier text is exactly `Function`. The exact-callee match means a method named
+`retrieval(...)` or a member call like `obj.eval(...)` does not fire — only the
+bare global `eval` and `new Function`.
+
+**Why it is flaggable:**
+`eval` and `new Function` compile a string into executable JavaScript in the
+agent's own process. When any part of that string originates with the model — a
+tool argument, or state the model wrote — the tool is an arbitrary-code-execution
+surface with no process boundary and no SDK sandbox between the call and the
+runtime's imports, file handles, and in-memory credentials. This is the TypeScript
+analogue of the Python `eval`/`exec`/`compile` mechanism documented for
+[CSDK-107](#csdk-107--tool-body-calls-evalexeccompile-on-dynamic-input-severity-high-confidence-085-fix-type-code).
+
+**Real-world consequence:**
+A `calculate(expr)` tool implemented as `return eval(expr)` is driven by an
+injected instruction into `process.env` to read secrets, or into
+`require('child_process').execSync(...)` to run commands — the full Node runtime is
+reachable from a single evaluated string.
+
+**Why severity is high and not medium:**
+There is no in-band sandbox between the evaluated string and the Node runtime;
+unlike Python there is not even a partial `__builtins__`-stripping mitigation to
+reach for, since `new Function` always closes over the global scope. The only
+reliable fix is removing dynamic evaluation, so the gap is not partially
+mitigable — high, matching the Python sibling.
+
+**Fix type — code:**
+Removing `eval` / `new Function` and dispatching on a fixed operation map is an
+edit to the tool's own source.
+
+**Confidence 0.9:**
+Marginally higher than the Python sibling's 0.85. The structural `code_exec` fact
+keys on the exact callee text `eval` and the exact constructor `Function`, so the
+two dominant false positives are eliminated by construction: a same-named method
+(`x.eval(...)`) and an unrelated identifier do not match. The residual gap is the
+false negative — dynamic execution reached through an indirect alias
+(`const e = eval; e(s)`), a `require('vm')` context, or a code-exec helper in
+another module escapes the handler-body-only walk. There is no `re.compile`-style
+false positive here (no TS builtin collides with the matched names), which is why
+confidence sits above the Python rule.
+
 ### CSDK-107 — Tool body calls eval/exec/compile on dynamic input (Severity: high, Confidence: 0.85, Fix type: code)
 
 **What we detect:**
@@ -83,10 +137,25 @@ positive, but a dynamic-eval helper in another module, or evaluation via
 
 ## What this policy does not cover
 
-Identical to [openai_sdk/code_execution.md](../openai_sdk/code_execution.md#what-this-policy-does-not-cover):
+For the Python rule (CSDK-107), identical to
+[openai_sdk/code_execution.md](../openai_sdk/code_execution.md#what-this-policy-does-not-cover):
 eval/exec reached through a helper in another module, alternative dynamic-code
 primitives (`types.FunctionType`, `marshal.loads`, `pickle.loads`,
 `importlib`-driven loading), and evaluations whose input is provably constant.
+
+For the TypeScript rule (CSDK-011), the structural fact matches only the bare
+`eval` callee and `new Function` constructor in the handler body, so these escape:
+- `eval` reached through an alias (`const e = eval; e(s)`) or a property access
+  (`window.eval`, `globalThis.eval`).
+- The `vm` module (`vm.runInNewContext`, `vm.runInThisContext`,
+  `new vm.Script(...)`), `require`/dynamic `import()` of attacker-named modules,
+  and `setTimeout("...string...", 0)` string-form evaluation — none are in the
+  matched set.
+- A code-exec call in a helper in another module, since the walk sees only the
+  tool's own handler.
+- Evaluations whose argument is provably a constant literal (the fact does not
+  reason about whether the evaluated string is model-controlled — it flags the
+  presence of the primitive).
 
 ---
 

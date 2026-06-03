@@ -8,6 +8,11 @@ rules:
     confidence: 0.7
     scope: tool
     fix_type: code
+  - id: CSDK-012
+    severity: medium
+    confidence: 0.5
+    scope: tool
+    fix_type: code
 references: [LLM02, LLM06]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM02, LLM06]
 
 **Policy ID:** `claude_sdk_path_safety`  
 **File:** `claude_sdk/path_safety.yaml`  
-**Rules:** CSDK-004  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** CSDK-004, CSDK-012  
+**Severities:** high, medium  
+**Fix types:** code, code  
 **References:** LLM02, LLM06
 
 ---
@@ -94,6 +99,58 @@ positive. Conversely, a tool that calls `.resolve()` but never checks containmen
 passes the rule yet is still unsafe — a false negative the rule cannot close,
 which is why containment lives in the recommendations.
 
+### CSDK-012 — TypeScript Claude SDK tool writes to the filesystem (Severity: medium, Confidence: 0.5, Fix type: code)
+
+**What we detect:**
+A TypeScript Claude SDK `tool(...)` whose handler body contains any of the
+substrings `writeFileSync(`, `writeFile(`, or `createWriteStream(` (predicate
+`has_body_text` — a literal substring scan over the handler's source span). This
+is a **coarse** signal: it fires on the *presence of a filesystem write*, not on a
+write of an unnormalized or model-controlled path. Unlike the Python sibling
+CSDK-004, there is **no** path-flow analysis behind it — TS per-parameter
+path-normalization tracking is not wired, so the rule cannot tell a write to a
+fixed, safe path from a write to a model-supplied one.
+
+**Why it is flaggable:**
+A filesystem write inside a model-callable tool is a candidate arbitrary-file
+*overwrite* primitive: if the path or contents derive from a tool argument, a
+prompt-injected agent can overwrite files the host process can reach — source,
+config, or `.claude/settings.json`. The threat model overlaps the Python sibling's
+write half (see
+[CSDK-004](#csdk-004--path-parameter-used-in-io-without-validation-severity-high-confidence-07-fix-type-code))
+but the detection is far weaker: CSDK-004 confirms an *unnormalized path
+parameter* flows into the write, whereas CSDK-012 only confirms a *write API is
+present*.
+
+**Real-world consequence:**
+A `saveNote(name, body)` tool doing `writeFileSync(name, body)` is steered into
+`writeFileSync("../../.bashrc", payload)` or into overwriting a config file to
+widen the agent's own permissions.
+
+**Why severity is medium and not high:**
+This is deliberately one notch below the Python sibling's high precisely because
+the signal is coarse. The rule fires on *any* write — including writes to a
+hard-coded safe path with no model influence — so a large fraction of hits are not
+exploitable. Pairing a low-precision detector with a high severity would
+overstate the finding; medium reflects that this is a lead to confirm, not a
+near-certain defect.
+
+**Fix type — code:**
+Confining writes to a working directory and resolving/validating the final path is
+an edit to the tool's own source.
+
+**Confidence 0.5:**
+The lowest in this file, and honestly so. Because the match is a bare substring
+scan with no path-flow analysis, the false-positive rate is high by construction:
+a write to a fixed literal path, a write whose path is fully developer-controlled,
+or even the substring `writeFile(` appearing in a comment or string in the handler
+span all fire. The 0.5 encodes "about half of these are likely benign — confirm
+the path or contents are model-influenced before acting." False negatives are also
+present: a write via `fs.promises.writeFile` aliased and renamed, `fs.appendFile`,
+`fs.open` + `write`, `fs.cp`, `fs.rename`, or a stream piped to a file all escape
+the substring set. This is the weakest rule of the five TS Claude rules and is
+labelled as such.
+
 ---
 
 ## What this policy does not cover
@@ -105,6 +162,15 @@ which is why containment lives in the recommendations.
 - Path-like values that do not match the name heuristic (e.g. a parameter called
   `target` or `name` that is actually a path).
 - Symlink races (TOCTOU) between the resolve and the open.
+- (TypeScript, CSDK-012) Reads — the rule matches *write* APIs only, so a
+  `readFileSync(modelPath)` arbitrary-read primitive does not fire.
+- (TypeScript, CSDK-012) Write APIs outside the substring set — `fs.appendFile`,
+  `fs.cp`, `fs.rename`, `fs.open` + `write`, `fsPromises.writeFile` under a renamed
+  alias, or a `pipe()` to a write stream.
+- (TypeScript, CSDK-012) Path normalization or containment is **not** assessed at
+  all: a TS tool that resolves and gates its write path correctly still fires
+  (false positive), and a write to a model-controlled path satisfies nothing the
+  rule can verify — the rule only knows a write API is present.
 
 ---
 

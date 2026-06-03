@@ -3,6 +3,11 @@ policy_id: claude_sdk_shell_safety
 category: claude_sdk
 topic: shell_safety
 rules:
+  - id: CSDK-010
+    severity: high
+    confidence: 0.7
+    scope: tool
+    fix_type: code
   - id: CSDK-108
     severity: high
     confidence: 0.7
@@ -15,9 +20,9 @@ references: [LLM06, LLM05]
 
 **Policy ID:** `claude_sdk_shell_safety`  
 **File:** `claude_sdk/shell_safety.yaml`  
-**Rules:** CSDK-108  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** CSDK-010, CSDK-108  
+**Severities:** high, high  
+**Fix types:** code, code  
 **References:** LLM06, LLM05
 
 > **Read [openai_sdk/shell_safety.md](../openai_sdk/shell_safety.md) for the full threat model.**
@@ -50,6 +55,50 @@ execution.
 ---
 
 ## Rule-by-rule defense
+
+### CSDK-010 — TypeScript Claude SDK tool shells out to the OS (Severity: high, Confidence: 0.7, Fix type: code)
+
+**What we detect:**
+A TypeScript Claude SDK `tool(...)` whose handler body contains any of the
+substrings `child_process`, `execSync(`, `execFile(`, `spawn(`, or `spawnSync(`
+(predicate `has_body_text` — a literal substring scan over the handler's source
+span, **not** an AST or dataflow match). The `has_body_text` line-span match keys
+off the raw text of the handler body, so it fires on the presence of any of these
+strings anywhere in that span.
+
+**Why it is flaggable:**
+A child-process API in a model-callable tool puts OS process spawn on the model's
+surface. Because the agent chooses the arguments it passes to the tool, a
+prompt-injected conversation can steer those values into a command. The mechanism
+is the same excessive-agency core documented for the Python sibling
+[CSDK-108](#csdk-108--tool-body-spawns-a-subprocess-severity-high-confidence-07-fix-type-code);
+the only delta is the API surface (`child_process.exec`/`execSync`/`spawn` vs
+Python `subprocess.*` / `os.system`).
+
+**Real-world consequence:**
+A `runCommand(cmd)` tool forwarding `cmd` into `execSync(cmd)` (which runs through
+`/bin/sh`) is one injected instruction away from `cat ~/.ssh/id_rsa` or
+exfiltrating `process.env`.
+
+**Why severity is high and not medium:**
+The fix usually means removing process spawn or rearchitecting behind a typed API;
+partial mitigations narrow specific injection classes but not the excessive-agency
+core. Matches the Python sibling's high.
+
+**Fix type — code:**
+Replacing the spawn with a library call, or fronting it with an argv array and an
+allow-list, is an edit to the tool's own source.
+
+**Confidence 0.7:**
+Matches the Python sibling's 0.7, but the gap is differently shaped because the
+match is a coarse substring scan rather than a resolved-callee AST match. False
+positives: the substring `child_process` appears in a comment, an import that is
+never called, or a string literal in the handler span and still fires; a tool that
+legitimately wraps a single fixed command also fires. False negatives: a spawn
+reached via an alias whose call text is none of the listed substrings (e.g. a
+destructured-and-renamed `const { exec: run } = ...; run(...)`), or one hidden in a
+helper in another module, is not seen. The substring nature is the reason this is a
+review signal, not a verdict.
 
 ### CSDK-108 — Tool body spawns a subprocess (Severity: high, Confidence: 0.7, Fix type: code)
 
@@ -85,11 +134,27 @@ hidden behind a cross-module helper escapes the body-only walk.
 
 ## What this policy does not cover
 
-Identical to [openai_sdk/shell_safety.md](../openai_sdk/shell_safety.md#what-this-policy-does-not-cover):
+For the Python rule (CSDK-108), identical to
+[openai_sdk/shell_safety.md](../openai_sdk/shell_safety.md#what-this-policy-does-not-cover):
 `asyncio.create_subprocess_*`, `pty.spawn` / `pexpect`, `multiprocessing.Process`,
 the `os.exec*` family, a spawn wrapped behind a helper in another module, and the
-question of whether a given literal command is safe. The HTTP-exfiltration path is
-covered by SSRF ([ssrf.md](ssrf.md), CSDK-008).
+question of whether a given literal command is safe.
+
+For the TypeScript rule (CSDK-010), the substring set is `child_process`,
+`execSync(`, `execFile(`, `spawn(`, `spawnSync(`, so these escape:
+- The bare `exec(` and `fork(` call forms — the substring list includes
+  `execSync(`/`execFile(`/`spawn(`/`spawnSync(` but not a bare `exec(` or `fork(`
+  with no qualifier (though `child_process` will still catch the common
+  import/namespace shape).
+- A child-process call reached through a renamed alias whose call text matches none
+  of the substrings, or one in a helper in another module.
+- Other process-spawning paths that do not contain the listed strings — e.g.
+  `Bun.spawn`, `Deno.Command`, `node:worker_threads`, or a native addon.
+- Whether a given literal command is actually safe (the substring presence is the
+  whole signal).
+
+The HTTP-exfiltration path is covered by SSRF ([ssrf.md](ssrf.md), CSDK-009 /
+CSDK-013).
 
 ---
 

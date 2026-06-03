@@ -28,6 +28,11 @@ rules:
     confidence: 0.75
     scope: agent
     fix_type: config
+  - id: CSDK-120
+    severity: high
+    confidence: 0.9
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06]
 ---
 
@@ -35,9 +40,9 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `claude_sdk_agent_safety`  
 **File:** `claude_sdk/agent_safety.yaml`  
-**Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105  
-**Severities:** high, high, high, high, high  
-**Fix types:** config, config, config, config, config  
+**Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120  
+**Severities:** high, high, high, high, high, high  
+**Fix types:** config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
 ---
@@ -189,6 +194,41 @@ legitimate need and the grant alone does not prove misuse.
 allowlists hosts and blocks internal ranges (see also [ssrf.md](ssrf.md)).
 
 **Confidence 0.75:** Legitimate fetch use is frequent; treat as a review prompt.
+
+### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions (Severity: high, Confidence: 0.9, Fix type: config)
+
+**What we detect:** A TypeScript `AgentDefinition` with the kwarg
+`permissionMode: "bypassPermissions"` (predicate `agent_kwarg_value`, matching
+kwarg `permissionMode` against the literal value `bypassPermissions`). This is the
+TypeScript twin of the Python rule
+[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-severity-high-confidence-09-fix-type-config);
+the predicate reads the value directly off the constructor.
+
+**Why it is flaggable:** It disables the SDK's interactive approval gate for
+*every* tool the agent runs — the one in-band control between model output and a
+real side effect. An agent dispatched autonomously on a model-generated task
+description then reaches its tools (including `Bash`, `Write`, `Edit`) with no
+per-call confirmation.
+
+**Real-world consequence:** A bypass agent holding `Bash`/`Write` executes
+model-chosen commands and file writes unattended; a single prompt-injected
+instruction becomes an unguarded action with no human in the loop.
+
+**Why severity is high and not medium:** It removes the in-band safety control
+wholesale, exactly as the Python sibling does. Highest-confidence rule in the file
+because the value is read directly from the declaration.
+
+**Fix type — config:** Drop the kwarg or set a safe mode (`"default"` /
+`"acceptEdits"`), and restrict the tool surface with `allowedTools` /
+`disallowedTools` in the constructor — a wiring change on the `AgentDefinition`,
+not a change to any tool's source.
+
+**Confidence 0.9:** The literal value is unambiguous, so the false-positive surface
+is small; the residual gap is the genuinely sandboxed, non-interactive context (CI
+with no secrets or network) where bypass is a defensible choice. Matches the
+Python sibling CSDK-103's 0.9. A false negative remains for the session-level
+`permissionMode` set on `ClaudeAgentOptions`/`query(...)` rather than on the
+`AgentDefinition` — that is a separate detection surface, not covered here.
 
 ---
 
