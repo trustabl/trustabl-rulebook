@@ -43,6 +43,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: ADK-109
+    severity: medium
+    confidence: 0.85
+    scope: agent
+    fix_type: config
   - id: ADK-110
     severity: medium
     confidence: 0.7
@@ -55,9 +60,9 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `google_adk_agent_safety`  
 **File:** `google_adk/agent_safety.yaml`  
-**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-110  
-**Severities:** medium, high, high, medium, high, high, high, medium, medium  
-**Fix types:** config, config, config, config, config, config, config, config, config  
+**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-109, ADK-110  
+**Severities:** medium, high, high, medium, high, high, high, medium, medium, medium  
+**Fix types:** config, config, config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
 ---
@@ -98,7 +103,7 @@ tools (ADK-105/110) pull attacker-controllable content into the loop, and absent
 `safety_settings` (ADK-104) leaves Gemini's content filters off — so harmful or
 injected content is neither screened on the way in nor filtered on the way out.
 
-All nine fixes are *config* — a callback, a kwarg, or a graph restructure on the
+All ten fixes are *config* — a callback, a kwarg, or a graph restructure on the
 agent constructor, not tool-body code.
 
 ---
@@ -179,6 +184,25 @@ availability footgun (and it re-fires any non-idempotent tool each iteration; se
 ADK-006). **Why medium:** denial-of-budget rather than a breach. **Fix type — config:**
 set `max_iterations=` as a defensive cap even when escalation is expected. **Confidence
 0.7:** an externally-bounded loop may make the cap redundant.
+
+### ADK-109 — TypeScript LlmAgent has no description (Severity: medium, Confidence: 0.85, Fix type: config)
+**What we detect:** a TypeScript `new LlmAgent({...})` with `description` missing
+(`agent_class: [LlmAgent]` AND `agent_kwarg_missing: [description]`). Same predicate
+pair as the Python sibling
+[ADK-101](#adk-101--llmagent-has-no-description-severity-medium-confidence-085-fix-type-config),
+applied to the TS constructor. **Why flaggable:** ADK routes delegation on each
+child's `description`; when a parent decides whether to hand off to a child in its
+`subAgents` tree the model sees only that string, so a child with none is
+effectively unreachable through delegation. **Real-world consequence:** the agent
+sits in the `subAgents` tree but is never delegated to — a silent routing bug.
+**Why medium:** a reliability/routing defect, not a direct breach — identical
+framing to ADK-101. **Fix type — config:** add a one-sentence `description` to the
+`new LlmAgent({...})` options; a constructor-wiring change, not tool-body code.
+**Confidence 0.85:** matches the Python sibling's 0.85 — an agent never used as a
+delegation target does not need a `description`, so a top-level/standalone TS
+`LlmAgent` with none is the dominant false positive; a `description` supplied
+through a non-literal value the static read cannot resolve is the residual false
+negative.
 
 ### ADK-110 — UrlContextTool/LoadWebPage without before_tool_callback (Severity: medium, Confidence: 0.7, Fix type: config)
 **What we detect:** `LlmAgent` with `UrlContextTool` / `LoadWebPage` and no

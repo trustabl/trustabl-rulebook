@@ -23,6 +23,11 @@ rules:
     confidence: 0.55
     scope: tool
     fix_type: code
+  - id: OAI-024
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
 references: [LLM10, LLM06, LLM02]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM10, LLM06, LLM02]
 
 **Policy ID:** `openai_sdk_network`  
 **File:** `openai_sdk/network.yaml`  
-**Rules:** OAI-005, OAI-011, OAI-016, OAI-018  
-**Severities:** high, high, high, medium  
-**Fix types:** code, code, code, code  
+**Rules:** OAI-005, OAI-011, OAI-016, OAI-018, OAI-024  
+**Severities:** high, high, high, medium, medium  
+**Fix types:** code, code, code, code, code  
 **References:** LLM10, LLM06, LLM02
 
 ---
@@ -150,6 +155,60 @@ or look it up in a server-side registry and build the URL from the trusted entry
 **Confidence 0.55:** many tools build URLs from validated IDs; the predicate cannot
 see validation that lives in another module (false positive).
 
+### OAI-024 — TypeScript tool builds outbound URL from a non-literal value (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:**
+A TypeScript `@function_tool` `execute` body that issues an HTTP request whose URL
+argument is non-literal (`has_dynamic_url_call: true`). The fact is structural, not
+substring: `tsHandlerFacts` walks the handler, recognizes a `call_expression`
+whose callee is one of the `fetch` / `axios(.get/.post/...)` / `got(.get/.post)` /
+`undici.fetch` / `undici.request` clients, and inspects that call's first
+positional argument. A plain `string`-node literal does **not** fire; a template
+string with at least one `${...}` substitution (NamedChildCount > 0), an
+identifier, a member expression, or a concatenation does. A backtick template with
+no substitution is treated as a literal and does not fire. This is the same
+predicate as the Python sibling
+[OAI-018](#oai-018--tool-builds-outbound-url-from-non-literal-value-severity-medium-confidence-055-fix-type-code),
+resolved against the TypeScript HTTP-client shapes.
+
+**Why it is flaggable:**
+Tool arguments are model-produced from conversation context, so a non-literal URL
+is a model-controlled destination: an attacker shaping that context can steer the
+request at an attacker host or an internal address the agent's egress can reach
+(SSRF), and the request body, headers, and credentials leak to whatever the URL
+resolves to. Same mechanism as OAI-018; see
+[claude_sdk/ssrf.md](../claude_sdk/ssrf.md) for the full SSRF threat model.
+
+**Real-world consequence:**
+A TS tool that does `fetch(\`https://api.example.com/${connectionId}\`)` with a
+model-supplied `connectionId` is pointed at `http://169.254.169.254/...` (cloud
+metadata) or an internal service, and the outbound request's auth header rides
+along.
+
+**Why severity is medium and not high:**
+Matches OAI-018's medium — the exploit path is real but conditional on the host's
+network position and on the model actually controlling the value; the OpenAI SSRF
+variants are scored a notch below the Claude/ADK SSRF rules pending corpus
+calibration.
+
+**Fix type — code:**
+Validating the model-supplied value against a host allow-list, or resolving an
+opaque ID against a server-side registry and building the URL from the trusted
+entry, is an edit to the tool's source.
+
+**Confidence 0.6:**
+Marginally above the Python OAI-018's 0.55 because the TS fact is *structural* — it
+keys on the AST type of the first argument of a recognized HTTP-client call, so a
+literal URL is correctly excluded by construction (no substring guesswork). The gap
+that remains: **false positives** — a non-literal URL that is in fact a validated
+or constant value (an ID checked against an allow-list in another module, or a base
+URL read from config) still fires, because the body-only walk does not see the
+validation and does not reason about whether the value is constant. **False
+negatives** — an HTTP client outside the recognized set (`node:http`/`https`
+`request`, `superagent`, `ky`, a wrapped client), a URL passed positionally to a
+helper that performs the fetch, or a `new URL(base, modelValue)` constructed before
+the call all escape the first-argument check on a known callee.
+
 ---
 
 ## What this policy does not cover
@@ -158,6 +217,7 @@ see validation that lives in another module (false positive).
 - Network calls where a `timeout=` is set to an unreasonable value (e.g. `timeout=3600`). The rule treats any timeout kwarg as a pass.
 - Network calls made transitively — the tool calls a helper that performs the request without a timeout. The predicate inspects the tool body directly and does not follow calls into other modules.
 - Retries without backoff. A tool that times out cleanly but retries in a tight loop is still a denial-of-budget hazard; that is OAI-009 / idempotency territory, not this policy.
+- For OAI-024: HTTP clients outside the recognized `fetch`/`axios`/`got`/`undici` set (`node:http`/`https` `request`, `superagent`, `ky`, a wrapped client), a URL constructed via `new URL(base, modelValue)` before the call, and a model-supplied value passed positionally into a helper that performs the fetch — all escape the first-argument check on a known callee.
 
 ---
 

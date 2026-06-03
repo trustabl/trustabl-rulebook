@@ -28,6 +28,11 @@ rules:
     confidence: 0.85
     scope: agent
     fix_type: config
+  - id: OAI-105
+    severity: high
+    confidence: 0.8
+    scope: agent
+    fix_type: config
   - id: OAI-110
     severity: high
     confidence: 0.6
@@ -40,9 +45,9 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-109, OAI-110  
-**Severities:** high, high, high, medium, high, high  
-**Fix types:** config, config, config, config, config, config  
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110  
+**Severities:** high, high, high, medium, high, high, high  
+**Fix types:** config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
 ---
@@ -167,6 +172,53 @@ paths/commands.
 **Confidence 0.75:** the privileged tools might be safe in context, or sandboxed by
 other means — hence the lower confidence and medium severity.
 
+### OAI-105 — TypeScript agent wires a content-fetching hosted tool without inputGuardrails (Severity: high, Confidence: 0.8, Fix type: config)
+
+**What we detect:**
+A TypeScript OpenAI Agents SDK `Agent({...})` that wires a content-fetching hosted
+tool — `webSearchTool`, `fileSearchTool`, or `hostedMcpTool` (the camelCase TS
+factory classes, read off `HostedToolRefs`) — AND has an empty `inputGuardrails`
+(`agent_uses_hosted_tool_class: [webSearchTool, fileSearchTool, hostedMcpTool]` AND
+`agent_kwarg_list_empty: [inputGuardrails]`). Because the first clause requires a
+*resolved* hosted-tool reference, an agent whose options object is opaque
+(non-literal) cannot trip the rule on the empty-list clause alone — it must have a
+recognized hosted tool. This is the TypeScript analogue of the Python sibling
+[OAI-109](#oai-109--websearchtool-without-input_guardrails-severity-high-confidence-085-fix-type-config),
+widened to file search and hosted MCP and using the TS camelCase factory names and
+`inputGuardrails` kwarg spelling.
+
+**Why it is flaggable:**
+These tools pull untrusted external content into the model — web pages, indexed
+files, or MCP-advertised tool output — that can carry prompt-injection payloads.
+With no `inputGuardrails` screening what reaches the model, injected instructions
+can hijack the agent into exfiltrating data or invoking other tools. Input
+guardrails are the SDK's primary ingress screen.
+
+**Real-world consequence:**
+A TS research agent wiring `webSearchTool()` with no `inputGuardrails` retrieves an
+attacker-seeded page whose "ignore previous instructions…" content becomes context
+and steers the next action; a `hostedMcpTool` pointed at an untrusted MCP endpoint
+returns tool output that does the same.
+
+**Why severity is high and not medium:**
+Untrusted-content intake with the primary ingress screen empty is a direct
+prompt-injection path, exactly as for the Python OAI-109 — high.
+
+**Fix type — config:**
+Adding a guardrail built with `defineInputGuardrail(...)` and wiring it via
+`inputGuardrails: [...]` on the `Agent({...})` constructor is a wiring change, not a
+tool-code edit. Pinning `hostedMcpTool` to trusted endpoints is likewise config.
+
+**Confidence 0.8:**
+A notch below the Python OAI-109's 0.85. The resolved-hosted-tool requirement
+removes the dominant false positive (an agent with no content-fetching tool cannot
+fire), but the gap remains that the agent may screen ingress by a mechanism the
+rule cannot see — a wrapper/factory that injects guardrails, or a guardrail list
+built from a non-literal value that the static read records as empty. The wider tool
+set (three classes, including `hostedMcpTool` whose risk depends on the MCP
+endpoint's trust) also admits more context-dependent legitimate use than OAI-109's
+single `WebSearchTool`, which is why it sits at 0.8 rather than 0.85.
+
 ### OAI-109 — WebSearchTool without input_guardrails (Severity: high, Confidence: 0.85, Fix type: config)
 
 **What we detect:** `agent_uses_hosted_tool_class: [WebSearchTool]` with empty
@@ -220,6 +272,12 @@ often acceptable — a review prompt more than a defect.
 - Handoff targets: an agent that hands off to a less-guarded sub-agent (a graph-level
   concern this per-agent rule does not traverse).
 - Guardrails or sandboxing applied by a wrapper/factory the static check cannot see.
+- For OAI-105: a TypeScript agent whose options object (and therefore its hosted-tool
+  list) is opaque to the static read fires nothing — the rule requires a *resolved*
+  `webSearchTool`/`fileSearchTool`/`hostedMcpTool` reference, so a content-fetching
+  tool wired through a non-literal value is a false negative; and an
+  `inputGuardrails` list built from a non-literal value reads as empty even when a
+  guardrail is present (false positive).
 
 ---
 

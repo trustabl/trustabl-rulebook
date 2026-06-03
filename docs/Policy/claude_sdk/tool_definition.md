@@ -23,6 +23,11 @@ rules:
     confidence: 0.8
     scope: tool
     fix_type: code
+  - id: CSDK-014
+    severity: low
+    confidence: 0.9
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM06]
 
 **Policy ID:** `claude_sdk_tool_definition`  
 **File:** `claude_sdk/tool_definition.yaml`  
-**Rules:** CSDK-001, CSDK-002, CSDK-007, CSDK-008  
-**Severities:** low, medium, low, medium  
-**Fix types:** code, code, code, code  
+**Rules:** CSDK-001, CSDK-002, CSDK-007, CSDK-008, CSDK-014  
+**Severities:** low, medium, low, medium, low  
+**Fix types:** code, code, code, code, code  
 **References:** LLM06
 
 ---
@@ -188,6 +193,51 @@ name (as well as a plain param named `kwargs`), so the rule fires on a real
 
 ---
 
+### CSDK-014 — TypeScript Claude SDK tool has no description (Severity: low, Confidence: 0.9, Fix type: code)
+
+**What we detect:**
+A TypeScript Claude Agent SDK `tool(name, description, schema, handler)` whose
+`description` (the second positional argument) is empty (`has_docstring: false`).
+Discovery captures the description only when that argument is a plain string
+literal: `tsStringLiteralText` returns the unquoted text for a tree-sitter
+`string` node and an empty string for anything else, and `PredHasDocstring` is
+`TrimSpace(Description) != ""`. So both an omitted/empty literal **and** a
+description built from a non-literal expression (a template string with `${...}`,
+an identifier, a member access, or a concatenation) are captured as empty and
+fire. Unlike the Python sibling CSDK-001, which reads the description from the
+function docstring, the TypeScript factory takes it as an explicit argument.
+
+**Why it is flaggable:**
+The SDK passes this `description` to the model as the sole signal for when to
+invoke the tool. With it empty, the model routes on the tool name alone — the
+exact mis-selection mechanism documented for the Python sibling
+[CSDK-001](#csdk-001--tool-has-no-description-severity-low-confidence-095-fix-type-code).
+
+**Real-world consequence:**
+A TypeScript `tool("lookup", "", schema, handler)` sits next to a
+`tool("search", "...", ...)`; under an ambiguous query the model cannot tell which
+retrieves what and picks wrong, returning the wrong data with full confidence.
+
+**Why severity is low and not medium:**
+Like CSDK-001 it degrades selection quality but rarely causes direct harm on its
+own, and a well-chosen tool name partially compensates. Matches the Python
+sibling's low severity.
+
+**Fix type — code:**
+Supplying the `description` argument is an edit to the `tool(...)` call site —
+tool source.
+
+**Confidence 0.9:**
+Marginally below the Python sibling's 0.95. The detection is mechanically exact (a
+literal description is captured, anything else reads as empty), so the firing
+itself is unambiguous; the 0.9 reflects that a non-literal description built at
+runtime (a constant assembled from `const` fragments) is genuinely present to the
+model yet captured as empty here — a false positive the literal-only capture
+cannot rule out. It carries no `re.compile`-style collision, so it does not drop
+lower.
+
+---
+
 ## What this policy does not cover
 
 - Descriptions or names that are present but *misleading* — a docstring that
@@ -197,6 +247,9 @@ name (as well as a plain param named `kwargs`), so the rule fires on a real
 - Overlapping tool *purposes* (two distinct, well-named tools that nonetheless do
   near-identical things) — a design issue no single-tool predicate sees.
 - Descriptions supplied via decorator kwargs rather than the docstring.
+- For CSDK-014: a TypeScript description assembled from a non-literal expression
+  (a `const` reference, a template string, a concatenation) is real text the model
+  sees, but the literal-only capture records it as empty and fires anyway.
 
 ---
 

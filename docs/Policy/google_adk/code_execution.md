@@ -8,6 +8,11 @@ rules:
     confidence: 0.9
     scope: tool
     fix_type: code
+  - id: ADK-015
+    severity: high
+    confidence: 0.9
+    scope: tool
+    fix_type: code
 references: [LLM06, LLM05]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM06, LLM05]
 
 **Policy ID:** `google_adk_code_execution`  
 **File:** `google_adk/code_execution.yaml`  
-**Rules:** ADK-011  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** ADK-011, ADK-015  
+**Severities:** high, high  
+**Fix types:** code, code  
 **References:** LLM06, LLM05
 
 > **Read [openai_sdk/code_execution.md](../openai_sdk/code_execution.md) for the full threat model.**
@@ -86,6 +91,56 @@ Same profile as OAI-013 — the bare-callee match avoids the `re.compile` false
 positive, but a dynamic-eval helper defined in another module, or evaluation via
 `ast.literal_eval`-lookalikes / `types.FunctionType`, escapes the body-only walk.
 
+### ADK-015 — TypeScript FunctionTool body evaluates dynamic code (Severity: high, Confidence: 0.9, Fix type: code)
+
+**What we detect:**
+A TypeScript `FunctionTool` whose `execute` handler calls the bare `eval()` builtin
+or constructs `new Function(...)` (predicate `has_code_exec_call`, backed by the
+structural `code_exec` fact in `ts_handler_facts.go`). The fact fires on two AST
+shapes only: a `call_expression` whose callee text is exactly `eval`, and a
+`new_expression` whose constructor identifier text is exactly `Function`. The
+exact-callee match means a method named `retrieval(...)` or a member call like
+`obj.eval(...)` does not fire — only the bare global `eval` and `new Function`. This
+is the TypeScript analogue of the Python sibling
+[ADK-011](#adk-011--tool-body-calls-evalexeccompile-on-dynamic-input-severity-high-confidence-09-fix-type-code).
+
+**Why it is flaggable:**
+`eval` and `new Function` compile a string into executable JavaScript in the agent's
+own Node process. When any part of that string originates with the model — a tool
+argument, or session state the model wrote — the tool is an arbitrary-code-execution
+surface with no SDK sandbox between the call and `process.env`, the filesystem, the
+network, and the `require`/`import` graph.
+
+**Real-world consequence:**
+A `run_formula(formula)` tool implemented as `return eval(formula)` is driven by an
+injected instruction into `process.env` to read Vertex credentials, or into
+`require('child_process').execSync(...)` to run commands — and on a GCP runtime an
+evaluated string can call the already-imported Google client libraries directly to
+read Storage, BigQuery, or Secret Manager within the service account's grants.
+
+**Why severity is high and not medium:**
+There is no in-band sandbox between the evaluated string and the Node runtime;
+unlike Python there is not even a partial `__builtins__`-stripping mitigation, since
+`new Function` always closes over the global scope. The only reliable fix is
+removing dynamic evaluation, so the gap is not partially mitigable — high, matching
+the Python sibling.
+
+**Fix type — code:**
+Removing `eval` / `new Function` and using a constrained parser (or isolating the
+evaluation in a `worker_threads` worker / separate sandboxed process) is an edit to
+the tool's source.
+
+**Confidence 0.9:**
+Matches the Python ADK-011's 0.9. The structural `code_exec` fact keys on the exact
+callee text `eval` and the exact constructor `Function`, so the two dominant false
+positives are eliminated by construction: a same-named method (`x.eval(...)`) and an
+unrelated identifier do not match, and there is no `re.compile`-style builtin
+collision in TS. The residual gap is the false negative — dynamic execution reached
+through an alias (`const e = eval; e(s)`), a property access (`globalThis.eval`), the
+`vm` module, `setTimeout("...string...", 0)`, or a code-exec helper in another module
+escapes the handler-body-only walk; and the fact flags the presence of the primitive
+without reasoning about whether the evaluated string is model-controlled.
+
 ---
 
 ## What this policy does not cover
@@ -96,6 +151,15 @@ primitives (`types.FunctionType`, `marshal.loads`, `pickle.loads`,
 `importlib`-driven loading), and the question of whether a given evaluation is
 safe because its input is fully constant. ADK note: the rule does not inspect the
 service-account scope, so it cannot weight impact by the agent's GCP grants.
+
+For the TypeScript rule (ADK-015), the structural fact matches only the bare `eval`
+callee and `new Function` constructor in the handler body, so these escape: `eval`
+through an alias or property access (`globalThis.eval`); the `vm` module
+(`vm.runInNewContext`, `new vm.Script(...)`); dynamic `import()` / `require` of
+attacker-named modules; `setTimeout("...string...", 0)` string-form evaluation; a
+code-exec call in a helper in another module; and an evaluation whose argument is
+provably a constant literal (the fact flags the primitive's presence, not whether
+its input is model-controlled).
 
 ---
 

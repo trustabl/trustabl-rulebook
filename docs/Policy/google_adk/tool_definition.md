@@ -23,6 +23,11 @@ rules:
     confidence: 0.7
     scope: tool
     fix_type: code
+  - id: ADK-013
+    severity: low
+    confidence: 0.8
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM06]
 
 **Policy ID:** `google_adk_tool_definition`  
 **File:** `google_adk/tool_definition.yaml`  
-**Rules:** ADK-001, ADK-002, ADK-007, ADK-009  
-**Severities:** low, medium, low, low  
-**Fix types:** code, code, code, code  
+**Rules:** ADK-001, ADK-002, ADK-007, ADK-009, ADK-013  
+**Severities:** low, medium, low, low, low  
+**Fix types:** code, code, code, code, code  
 **References:** LLM06
 
 > **Read [claude_sdk/tool_definition.md](../claude_sdk/tool_definition.md) for the full threat model.**
@@ -117,11 +122,52 @@ string literal or comment can false-positive, and a non-`print` stdout write
 
 ---
 
+### ADK-013 — TypeScript FunctionTool has no description (Severity: low, Confidence: 0.8, Fix type: code)
+
+**What we detect:**
+A TypeScript `new FunctionTool({...})` whose `description` option is empty
+(`has_docstring: false`). Discovery sets the tool's `Description` only when the
+`description` key's value is a string literal (`ExprLiteralString`); `PredHasDocstring`
+is `TrimSpace(Description) != ""`. So an omitted/empty `description` **and** one
+built from a non-literal expression are both captured as empty and fire. Unlike
+Python ADK, which derives the description from the function docstring, the
+TypeScript SDK takes it as an explicit option.
+
+**Why it is flaggable:**
+ADK exposes the FunctionTool to the Gemini model using this `description`, read
+verbatim to decide whether and how to call the tool. Empty, the model has no signal
+about the tool's purpose and under-calls it or calls it with wrong arguments — the
+same routing mechanism as the Python sibling
+[ADK-001](#adk-001--functiontool-wrapped-function-has-no-docstring-severity-low-confidence-08-fix-type-code).
+
+**Real-world consequence:**
+A `new FunctionTool({ name: "fetchOrder", description: "", ... })` sits next to a
+described sibling; the model cannot tell them apart and routes wrong under an
+ambiguous prompt.
+
+**Why severity is low and not medium:**
+Like ADK-001 it degrades selection but rarely causes direct harm; the tool name
+partially compensates.
+
+**Fix type — code:**
+Supplying the `description` in the `new FunctionTool({...})` options is a
+tool-source edit.
+
+**Confidence 0.8:**
+Matches the Python sibling's 0.8 — the same "described via the agent/instruction
+layer rather than the tool option" false positive applies, plus the TS-specific
+case of a `description` assembled from a non-literal expression that is real text
+the model sees yet captured as empty here.
+
+---
+
 ## What this policy does not cover
 
 Same gaps as [claude_sdk/tool_definition.md](../claude_sdk/tool_definition.md#what-this-policy-does-not-cover):
 present-but-misleading descriptions, too-loose types, overlapping purposes, and
-descriptions supplied outside the docstring.
+descriptions supplied outside the docstring. For ADK-013 specifically: a TypeScript
+`description` assembled from a non-literal expression is real text the model reads,
+but the literal-only capture records it as empty and fires anyway.
 
 ---
 

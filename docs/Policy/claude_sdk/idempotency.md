@@ -8,6 +8,11 @@ rules:
     confidence: 0.55
     scope: tool
     fix_type: code
+  - id: CSDK-016
+    severity: medium
+    confidence: 0.5
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM06]
 
 **Policy ID:** `claude_sdk_idempotency`  
 **File:** `claude_sdk/idempotency.yaml`  
-**Rules:** CSDK-006  
-**Severities:** medium  
-**Fix types:** code  
+**Rules:** CSDK-006, CSDK-016  
+**Severities:** medium, medium  
+**Fix types:** code, code  
 **References:** LLM06
 
 ---
@@ -87,6 +92,58 @@ server-side regardless of the tool signature), the verb may be non-mutating
 (`create_summary` returns text), or the key may be named outside the heuristic.
 Treat it as a review prompt for side-effecting tools, not a defect.
 
+### CSDK-016 — TypeScript Claude SDK mutating tool has no idempotency key (Severity: medium, Confidence: 0.5, Fix type: code)
+
+**What we detect:**
+A TypeScript Claude SDK `tool(...)` whose name begins with a mutating verb prefix
+(`create`, `send`, `delete`, `post`, `update`, `refund`, `charge`, `issue`) and
+whose parameter names contain no idempotency-key-shaped name (`name_has_prefix`
+AND `not param_name_matches` for `contains:[idempot]` /
+`exact:[requestId, request_id, txnId, txn_id]`). This is a name-and-parameter
+heuristic over the tool's discovered signature, not a dataflow check. The prefix
+set is bare (no trailing underscore), so it matches both the snake_case
+`create_charge` and the idiomatic-TS `createCharge` — the prefix is a literal
+string-prefix test against the tool name. The exact-name exclusion list adds the
+camelCase `requestId`/`txnId` spellings the Python sibling CSDK-006 does not carry.
+
+**Why it is flaggable:**
+A mutating tool with no dedupe parameter cannot tell a retry from a new request,
+so an agent retry double-fires the side effect. The mechanism is identical to the
+Python sibling
+[CSDK-006](#csdk-006--mutating-tool-has-no-idempotency-key-severity-medium-confidence-055-fix-type-code);
+the Zod schema is the TypeScript equivalent of the Python signature the model
+fills.
+
+**Real-world consequence:**
+A `createCharge({ token, cents })` tool whose Zod schema exposes no
+`idempotencyKey` is retried after a lost response and bills the customer twice; a
+`sendInvoice(...)` retried sends the invoice twice.
+
+**Why severity is medium and not high:**
+Same as CSDK-006 — the damage is real (duplicate side effects) but conditional on
+a retry actually occurring and on the downstream API not deduping by another
+mechanism. Not low because when it fires the effect is a real, user-visible wrong
+action.
+
+**Fix type — code:**
+Adding an `idempotencyKey` field to the tool's Zod schema and threading it to the
+backend is an edit to the tool's own source.
+
+**Confidence 0.5:**
+The lowest in the pack — set one notch below the Python CSDK-006's 0.55 because the
+prefix set is bare (no separator), which widens both error modes. **False
+positives:** the verb prefix matches non-mutating names that merely start with the
+string — `updatedAt`-style helpers, `createSummary` (returns text, mutates
+nothing), `issueDescription`; and dedupe enforced server-side (a Stripe-style API
+that honors an idempotency key the tool never names) makes the tool safe despite
+the empty signature. **False negatives:** a mutating tool named outside the prefix
+set (`book`, `apply`, `pay`, `transfer`) is missed; an idempotency parameter
+spelled outside the `idempot`/`requestId`/`txnId` heuristic (e.g. `dedupeKey`,
+`clientToken`) is not recognized and the tool fires even though it is safe — the
+inverse of a false positive but the same root cause, a name heuristic with no view
+of how the parameter is used. Treat every hit as a review prompt for a
+side-effecting tool, not a defect.
+
 ---
 
 ## What this policy does not cover
@@ -99,6 +156,11 @@ Treat it as a review prompt for side-effecting tools, not a defect.
   through, persisted, honored) — the rule only checks presence.
 - Non-retry duplication (the model deliberately calling the tool twice for two
   distinct actions).
+- For CSDK-016: a mutating tool whose name falls outside the prefix set (`book`,
+  `pay`, `transfer`, `apply`), and an idempotency parameter spelled outside the
+  `idempot`/`requestId`/`txnId` heuristic (`dedupeKey`, `clientToken`) — the first
+  is a false negative on a genuinely-unsafe tool, the second a false positive on a
+  safe one.
 
 ---
 
