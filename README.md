@@ -5,11 +5,13 @@ static analyzer's policy ruleset. Canonical YAML rules live in
 [trustabl/trustabl-rules](https://github.com/trustabl/trustabl-rules) — this
 repo links into them and explains the threat model behind each rule.
 
-Coverage spans three agent SDKs:
+Coverage spans three agent SDKs plus a protocol-level rule family for the
+Model Context Protocol:
 
 - **Claude Agent SDK** (`CSDK-*`) — [claude_sdk/](claude_sdk/)
 - **OpenAI Agents SDK** (`OAI-*`) — [openai_sdk/](openai_sdk/)
 - **Google ADK** (`ADK-*`) — [google_adk/](google_adk/)
+- **Model Context Protocol** (`MCP-*`) — [mcp/](mcp/) (rules ship; rationale docs not yet authored — see [coverage](#current-totals) below)
 
 ## What lives here
 
@@ -35,12 +37,27 @@ Risk score = `severity_weight × confidence × 100`. Weights: `low=0.15`,
 
 ## Current totals
 
-| SDK                 | Tool   | Agent  | Subagent | Repo  | Total  |
-| ------------------- | ------ | ------ | -------- | ----- | ------ |
-| Claude Agent SDK    | 7      | 2      | 1        | 0     | 10     |
-| OpenAI Agents SDK   | 13     | 6      | 0        | 1     | 20     |
-| Google ADK          | 8      | 5      | 0        | 0     | 13     |
-| **All**             | **28** | **13** | **1**    | **1** | **43** |
+The engine ships **102 rules across 45 files** in
+[trustabl-rules](https://github.com/trustabl/trustabl-rules). This rulebook
+documents **88 of them across 37 rationale docs** — full rationale coverage of
+the three agent SDKs (Claude Agent SDK, OpenAI Agents SDK, Google ADK). The
+breakdown below counts **shipped rules per family**; the rightmost column flags
+where rationale docs are still missing.
+
+| Family                 | Tool   | Agent  | Subagent | Repo  | Shipped | Rationale docs |
+| ---------------------- | ------ | ------ | -------- | ----- | ------- | -------------- |
+| Claude Agent SDK       | 17     | 8      | 2        | 3     | 30      | 30 ✓           |
+| OpenAI Agents SDK      | 21     | 9      | 0        | 2     | 32      | 32 ✓           |
+| Google ADK             | 14     | 11     | 0        | 1     | 26      | 26 ✓           |
+| Model Context Protocol | 14     | 0      | 0        | 0     | 14      | 0 — see gap    |
+| **All**                | **66** | **28** | **2**    | **6** | **102** | **88**         |
+
+**Coverage gap (honest):** the `mcp/` pack — 14 rules, `MCP-001`–`MCP-014`, all
+tool-scope — ships in `trustabl-rules` and now appears in
+[POLICY_INDEX.md](POLICY_INDEX.md), but **has no rationale docs yet** (no
+`docs/Policy/mcp/` directory). Until those are authored, `tools/check_rulebook.py`
+fails on the 14 missing-doc errors. Authoring them (threat models + OWASP
+citations) is tracked separately.
 
 Full breakdown: [POLICY_INDEX.md](POLICY_INDEX.md).
 

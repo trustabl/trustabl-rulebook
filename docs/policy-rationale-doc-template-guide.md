@@ -217,7 +217,7 @@ rule's detection scope.
 | `claude_sdk/network.yaml` | `docs/Policy/claude_sdk/network.md` |
 | `openai_sdk/agent_safety.yaml` | `docs/Policy/openai_sdk/agent_safety.md` |
 | `google_adk/tool_definition.yaml` | `docs/Policy/google_adk/tool_definition.md` |
-| `mcp/injection.yaml` | `docs/Policy/mcp/injection.md` |
+| `mcp/tool_definition.yaml` | `docs/Policy/mcp/tool_definition.md` |
 
 Category subdirectories under `docs/Policy/` mirror the repo root exactly.
 If a new category directory is created, create the matching directory in `docs/Policy/`.
@@ -245,8 +245,8 @@ These docs are the canonical format examples. Read one before writing a new doc.
 
 | Best for | Doc |
 |---|---|
-| Security rule (Critical) | [Policy/mcp/injection.md](Policy/mcp/injection.md) |
+| Security rule (high severity) | [Policy/claude_sdk/code_execution.md](Policy/claude_sdk/code_execution.md) |
 | Reliability rule with low confidence | [Policy/claude_sdk/idempotency.md](Policy/claude_sdk/idempotency.md) |
-| Cross-framework rule | [Policy/catalog/capability_class.md](Policy/catalog/capability_class.md) |
+| Capability-class rule shared across SDKs | [Policy/google_adk/shell_safety.md](Policy/google_adk/shell_safety.md) |
 | Agent-scope rule | [Policy/openai_sdk/agent_safety.md](Policy/openai_sdk/agent_safety.md) |
 | Cross-reference pattern | [Policy/openai_sdk/tool_definition.md](Policy/openai_sdk/tool_definition.md) |
