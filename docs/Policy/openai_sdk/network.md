@@ -105,30 +105,40 @@ False positives: code that wraps `urlopen` behind a helper that injects a timeou
 
 ### OAI-016 — TypeScript tool fetch call has no AbortSignal timeout (Severity: high, Confidence: 0.6, Fix type: code)
 
-**What we detect:** a TypeScript tool body that calls `fetch(` with no
-`AbortSignal` / `AbortController` / `signal:` / `AbortSignal.timeout` present
-(`has_body_text` for `fetch(` AND `not has_body_text` for the abort markers).
+**What we detect:** a TypeScript tool `execute` body that makes an HTTP call
+(`fetch` / `axios` / `got` / `undici`) with no timeout bound — the call carries no
+options object with a `signal`, `timeout`, or `abortSignal` key
+(`has_http_call_without_timeout: true`). The fact is **structural**:
+`tsHandlerFacts` walks the handler, recognizes a recognized HTTP-client
+`call_expression`, and inspects its argument objects for a timeout-bearing key, so
+a bare `fetch(url)` or `fetch(url, { method })` fires while `fetch(url, { signal:
+AbortSignal.timeout(ms) })` does not. This replaced the original brittle
+`has_body_text` substring check.
 
 **Why it is flaggable:** Node's and the browser's `fetch` have no implicit
 timeout; a slow host blocks the tool's `execute` callback — and the agent run
 loop — indefinitely, burning the turn's wall-clock budget and tying up the worker.
-Because these templates often interpolate the URL from tool arguments, the
-un-cancellable call also amplifies SSRF/exfiltration impact.
+When the URL is interpolated from tool arguments, the un-cancellable call also
+amplifies SSRF/exfiltration impact.
 
 **Real-world consequence:** a TS `web_fetch` tool hangs the whole agent turn when
 the model supplies a slow or hostile URL.
 
 **Why severity is high and not medium:** the failure denies the agent loop, with
-no in-band mitigation short of an explicit signal.
+no in-band mitigation short of an explicit signal/timeout.
 
 **Fix type — code:** pass `signal: AbortSignal.timeout(ms)` (or an
-`AbortController`) to `fetch`.
+`AbortController`) to `fetch`; `axios`/`got` take a `timeout` option directly.
 
-**Confidence 0.6:** `has_body_text` is a brittle substring check — it can miss a
-timeout wired through a wrapper, or fire when the abort lives in a helper.
-
-**Provisional (TypeScript):** this rule loads and validates today but will not
-fire until the engine's TypeScript tool parser ships; it is load-validated only.
+**Confidence 0.6:** the structural check is precise about the call shape (no
+substring guesswork), but it cannot see a timeout reached indirectly. **False
+positives** (fires though bounded): an options object passed by identifier
+(`fetch(url, opts)`), a `signal` / `AbortController` defined on a separate line, a
+`Promise.race([fetch(url), timeout])`, or an `axios.create({ timeout })` instance.
+**False negatives** (silent though unbounded): `signal: req.signal` with no
+deadline behind it, or `timeout: 0` (axios "no timeout"). These indirection blind
+spots — not substring brittleness — are why it sits with the TS dynamic-URL rule
+OAI-024 at 0.6 rather than higher.
 
 ### OAI-018 — Tool builds outbound URL from non-literal value (Severity: medium, Confidence: 0.55, Fix type: code)
 
@@ -218,6 +228,7 @@ the call all escape the first-argument check on a known callee.
 - Network calls made transitively — the tool calls a helper that performs the request without a timeout. The predicate inspects the tool body directly and does not follow calls into other modules.
 - Retries without backoff. A tool that times out cleanly but retries in a tight loop is still a denial-of-budget hazard; that is OAI-009 / idempotency territory, not this policy.
 - For OAI-024: HTTP clients outside the recognized `fetch`/`axios`/`got`/`undici` set (`node:http`/`https` `request`, `superagent`, `ky`, a wrapped client), a URL constructed via `new URL(base, modelValue)` before the call, and a model-supplied value passed positionally into a helper that performs the fetch — all escape the first-argument check on a known callee.
+- For OAI-016: a timeout reached indirectly — an options object passed by identifier, a `signal`/`AbortController` bound on a separate line, a `Promise.race` deadline, or an `axios.create({ timeout })` instance — is not seen, so the rule fires on some already-bounded calls; conversely a non-deadline `signal: req.signal` or an `axios` `timeout: 0` ("no timeout") is treated as bounded and does not fire.
 
 ---
 
