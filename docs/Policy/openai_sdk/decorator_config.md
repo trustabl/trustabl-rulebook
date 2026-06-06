@@ -9,7 +9,7 @@ rules:
     scope: tool
     fix_type: config
   - id: OAI-004
-    severity: medium
+    severity: low
     confidence: 0.7
     scope: tool
     fix_type: config
@@ -26,7 +26,7 @@ references: [LLM05]
 **Policy ID:** `openai_sdk_decorator_config`  
 **File:** `openai_sdk/decorator_config.yaml`  
 **Rules:** OAI-003, OAI-004, OAI-015  
-**Severities:** medium, medium, high  
+**Severities:** medium, low, high  
 **Fix types:** config, config, config  
 **References:** LLM05
 
@@ -89,7 +89,7 @@ input shape needed the relaxation, widen the type hints instead.
 **Confidence 0.95:** the literal `False` value is read directly — almost no false
 positives.
 
-### OAI-004 — Tool has no failure_error_function (Severity: medium, Confidence: 0.7, Fix type: config)
+### OAI-004 — Tool has no failure_error_function (Severity: low, Confidence: 0.7, Fix type: config)
 
 **What we detect:** a `@function_tool` with no `failure_error_function` kwarg.
 
@@ -99,8 +99,9 @@ model, which then has no recovery contract and may hallucinate retries.
 **Real-world consequence:** a transient failure is shown to the model as an opaque
 traceback; it retries a non-retryable action or abandons a recoverable one.
 
-**Why severity is medium and not high:** the SDK's default behavior is degraded but
-not catastrophic; many tools never raise.
+**Why severity is low:** this flags the *absence* of an optional safeguard whose
+default behavior is already tolerable, and many tools never raise or handle errors
+in-body, so it fires on a lot of correct code; it is a hygiene nudge, not a defect.
 
 **Fix type — config:** pass a `failure_error_function` that returns a structured
 error string.

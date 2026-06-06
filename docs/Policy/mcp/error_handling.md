@@ -4,7 +4,7 @@ category: mcp
 topic: error_handling
 rules:
   - id: MCP-006
-    severity: medium
+    severity: low
     confidence: 0.6
     scope: tool
     fix_type: code
@@ -31,7 +31,7 @@ An MCP tool handler that can raise without catching, detected by
 
 ## Rule-by-rule defense
 
-### MCP-006 — Tool raises exceptions without a structured error contract (Severity: medium, Confidence: 0.6, Fix type: code)
+### MCP-006 — Tool raises exceptions without a structured error contract (Severity: low, Confidence: 0.6, Fix type: code)
 
 **What we detect:** a handler body that contains a `raise` and no `try`/`except`.
 
@@ -40,10 +40,10 @@ exception to the connecting client as an opaque protocol error. The model on the
 other end often cannot recover or retry intelligently, and the raw message may
 leak internal detail — stack frames, absolute paths, secrets in arguments —
 across the server's trust boundary to whatever client connected (improper output
-handling, LLM05). Medium severity because the impact is degraded recovery plus a
-modest disclosure channel; confidence 0.6 because a handler may raise
-intentionally for a caller that handles it, and the body-only check does not see
-a `try` in a calling frame.
+handling, LLM05). Low severity because the impact is degraded recovery plus a
+modest disclosure channel, and a handler often raises intentionally for a caller
+or runtime that structures it; confidence 0.6 because the body-only check does
+not see a `try` in a calling frame.
 
 **Fix type — code:** returning a structured `{"error": ..., "retryable": ...}`
 result instead of raising is a source edit.

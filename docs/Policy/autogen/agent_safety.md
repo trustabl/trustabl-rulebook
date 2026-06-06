@@ -14,8 +14,8 @@ rules:
     scope: agent
     fix_type: config
   - id: AG2-004
-    severity: medium
-    confidence: 0.8
+    severity: low
+    confidence: 0.6
     scope: agent
     fix_type: config
   - id: AG2-005
@@ -36,7 +36,7 @@ references: [LLM05, LLM06, LLM10]
 **Policy ID:** `autogen_agent_safety`  
 **File:** `autogen/agent_safety.yaml`  
 **Rules:** AG2-001, AG2-002, AG2-004, AG2-005, AG2-006  
-**Severities:** high, high, medium, medium, medium  
+**Severities:** high, high, low, medium, medium  
 **Fix types:** config, config, config, config, config  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
@@ -48,7 +48,7 @@ Agent-scope rules for AutoGen / AG2 agents, read off the constructor kwargs of
 `ConversableAgent`, `UserProxyAgent`, `AssistantAgent`, and `GroupChatManager`.
 They flag the configurations AutoGen's own docs warn against: code execution on
 the host with no Docker (AG2-001), code execution with no human review
-(AG2-002), an unbounded group-chat loop (AG2-004), code execution enabled on the
+(AG2-002), a group-chat loop with no explicit round cap (AG2-004), code execution enabled on the
 LLM-facing assistant (AG2-005), and a code-executing agent with no auto-reply cap
 (AG2-006). Each uses the `agent_kwarg_value` / `agent_kwarg_present` /
 `agent_kwarg_missing` predicates against the constructor call.
@@ -73,13 +73,14 @@ the model's code runs with zero review.
 Two more rules guard the generate/execute boundary and the loop bounds.
 Collapsing generation and execution into one `AssistantAgent` (AG2-005) means the
 agent the model fully controls also runs whatever it produces, removing the review
-boundary AutoGen's two-agent pattern exists to provide. And unbounded loops are an
-Unbounded Consumption (LLM10) hazard with a safety edge: a `GroupChatManager`
-with no `max_round` (AG2-004) lets a degenerate conversation run until something
-else stops it, and a code-executing executor with no `max_consecutive_auto_reply`
-(AG2-006) can auto-execute model code an unbounded number of times — so a single
-injected instruction is amplified across many runs, multiplying both cost and
-blast radius.
+boundary AutoGen's two-agent pattern exists to provide. And loops that rely on the
+framework default instead of an explicit cap are an Unbounded Consumption (LLM10)
+hazard with a safety edge: a `GroupChatManager` with no explicit `max_round`
+(AG2-004) falls back to AutoGen's built-in default, letting a degenerate
+conversation run to that generic ceiling, and a code-executing executor with no
+`max_consecutive_auto_reply` (AG2-006) falls back to the class default of 100 — so
+a single injected instruction can be amplified across up to that many runs,
+multiplying both cost and blast radius.
 
 ---
 
@@ -129,22 +130,24 @@ or disable execution. **Confidence 0.85:** the rule confirms execution is
 configured and review is off, but cannot see an out-of-band approval gate the team
 may have wired around the agent — a small over-flag.
 
-### AG2-004 — GroupChatManager has no max_round bound (Severity: medium, Confidence: 0.8, Fix type: config)
+### AG2-004 — GroupChatManager has no explicit max_round bound (Severity: low, Confidence: 0.6, Fix type: config)
 
 **What we detect:** a `GroupChatManager` (or `GroupChat`) with no `max_round`
 kwarg (predicate `agent_kwarg_missing`).
 
-**Why it is flaggable:** with no round cap the speaker-selection loop has no
-upper bound; a degenerate conversation runs until the budget or wall-clock is
-exhausted (LLM10), and if participants hold side-effecting tools the same
-mutation can be applied repeatedly.
+**Why it is flaggable:** with no explicit `max_round` the speaker-selection loop
+falls back to AutoGen's built-in default rather than a task-sized cap; a
+degenerate conversation runs to that generic ceiling (LLM10), and if participants
+hold side-effecting tools the same mutation can be applied repeatedly up to that
+bound.
 
 **Real-world consequence:** two agents keep handing a task back and forth because
 neither emits the termination signal; the chat burns API budget for hundreds of
 rounds before a timeout kills it.
 
-**Why severity is medium and not high:** the usual outcome is a cost/availability
-incident rather than a direct compromise — serious but recoverable, and only a
+**Why severity is low:** AutoGen already bounds the loop with a built-in default,
+so this flags a missing *explicit, task-sized* cap rather than a true runaway — a
+hygiene nudge whose usual worst case is a cost/availability incident, and only a
 safety problem when looped tools have side effects. **Fix type — config:** pass
 `max_round=`. **Confidence 0.8:** a chat wrapped by an external timeout or a
 custom loop guard is over-flagged, since the rule sees only the constructor
@@ -180,10 +183,11 @@ over-flags safe two-role setups that happen to set the kwarg on the assistant.
 `code_execution_config` present AND no `max_consecutive_auto_reply` kwarg
 (predicates `agent_kwarg_present` + `agent_kwarg_missing`).
 
-**Why it is flaggable:** with no auto-reply cap a code-executing agent can
-auto-respond — and therefore auto-execute model code — an unbounded number of
-times in one exchange, amplifying the cost and blast radius of a single injected
-instruction.
+**Why it is flaggable:** with no explicit `max_consecutive_auto_reply` a
+code-executing agent falls back to AutoGen's class default of 100
+(MAX_CONSECUTIVE_AUTO_REPLY) — so it can auto-respond, and therefore auto-execute
+model code, up to 100 times in one exchange, amplifying the cost and blast radius
+of a single injected instruction.
 
 **Real-world consequence:** an executor with no `max_consecutive_auto_reply`
 loops on a failing code block, re-executing slightly varied attacker code dozens
@@ -191,7 +195,8 @@ of times before anything stops it.
 
 **Why severity is medium and not high:** it is an amplifier of the underlying
 code-execution risk (covered by AG2-001/002), not a fresh RCE path on its own;
-its impact is the unbounded *repetition* rather than the execution itself. **Fix
+its impact is the *repetition* (up to the default cap of 100) rather than the
+execution itself. **Fix
 type — config:** set `max_consecutive_auto_reply=` to a small integer.
 **Confidence 0.7:** a deployment that bounds the loop another way (an external
 turn limit, a custom reply handler) is over-flagged, since the rule sees only the

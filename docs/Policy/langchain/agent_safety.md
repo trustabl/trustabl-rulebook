@@ -9,13 +9,13 @@ rules:
     scope: agent
     fix_type: code
   - id: LC-102
-    severity: medium
-    confidence: 0.8
+    severity: low
+    confidence: 0.6
     scope: agent
     fix_type: config
   - id: LC-111
-    severity: medium
-    confidence: 0.8
+    severity: low
+    confidence: 0.6
     scope: agent
     fix_type: config
 references: [LLM06, LLM10]
@@ -26,8 +26,8 @@ references: [LLM06, LLM10]
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
 **Rules:** LC-101, LC-102, LC-111
-**Severities:** high, medium
-**Fix types:** code, config
+**Severities:** high, low, low
+**Fix types:** code, config, config
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -37,8 +37,8 @@ references: [LLM06, LLM10]
 Agent-scope rules for the constructor-shaped LangChain / LangGraph agents Trustabl
 discovers: `create_react_agent` and `create_agent` (normalized class `ReactAgent` /
 `CreateAgent`) and the legacy `AgentExecutor`. The rules cover the two highest-signal
-agent-level risks: wiring a code-execution/shell built-in tool (LC-101) and an
-unbounded tool-calling loop (LC-102 / LC-111).
+agent-level risks: wiring a code-execution/shell built-in tool (LC-101) and a
+tool-calling loop with no explicit iteration cap (LC-102 / LC-111).
 
 The raw `StateGraph` graph agent is a documented discovery gap — its tools and model
 are assembled across many call sites, so it is not yet modeled as a single agent.
@@ -71,28 +71,30 @@ and read the deployment's secrets.
 sandbox-and-gate it. **Confidence 0.85:** a few agents legitimately need a REPL and
 have sandboxed it out of band, which the class-name match cannot see.
 
-### LC-102 — AgentExecutor has no max_iterations limit (Severity: medium, Confidence: 0.8, Fix type: config)
+### LC-102 — AgentExecutor has no explicit max_iterations limit (Severity: low, Confidence: 0.6, Fix type: config)
 
 **What we detect:** an `AgentExecutor` with no effective `max_iterations` kwarg
 (predicate `agent_kwarg_missing`).
 
-**Why it is flaggable:** with no iteration ceiling, a model that never emits a final
-answer — it loops calling tools, or oscillates between two — runs until it exhausts
-the API budget or wall-clock (LLM10, Unbounded Consumption). When the looped tools
-have side effects, the runaway loop is also a correctness and safety problem, not
-just a cost one.
+**Why it is flaggable:** with no explicit `max_iterations`, the executor falls back
+to LangChain's default of 15 — a generic ceiling, not one sized to this task. A
+model that loops or oscillates still runs up to 15 tool round-trips (LLM10,
+Unbounded Consumption), a cost the workflow may not tolerate, and the implicit cap
+can shift between versions; when the looped tools have side effects it is a
+correctness concern too.
 
-**Severity medium:** a cost/availability incident rather than a direct compromise.
-**Confidence 0.8:** an executor wrapped by an external timeout or a custom loop
-guard is over-flagged.
+**Severity low:** the framework default (15) already prevents a true runaway, so
+this flags a missing *explicit, task-sized* cap — a hygiene nudge, not a defect.
+**Confidence 0.6:** an executor relying on the default, wrapped by an external
+timeout, or guarded by a custom loop is over-flagged.
 
-### LC-111 — TypeScript AgentExecutor has no maxIterations limit (Severity: medium, Confidence: 0.8, Fix type: config)
+### LC-111 — TypeScript AgentExecutor has no explicit maxIterations limit (Severity: low, Confidence: 0.6, Fix type: config)
 
 **What we detect:** a TS `AgentExecutor` with no effective `maxIterations` kwarg.
 
 **Why it is flaggable / consequence:** identical to LC-102 in LangChain.js.
 
-**Severity medium / Confidence 0.8:** same profile.
+**Severity low / Confidence 0.6:** same profile as LC-102.
 
 ---
 

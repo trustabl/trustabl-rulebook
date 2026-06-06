@@ -4,7 +4,7 @@ category: claude_sdk
 topic: error_handling
 rules:
   - id: CSDK-005
-    severity: medium
+    severity: low
     confidence: 0.6
     scope: tool
     fix_type: code
@@ -16,7 +16,7 @@ references: [LLM05]
 **Policy ID:** `claude_sdk_error_handling`  
 **File:** `claude_sdk/error_handling.yaml`  
 **Rules:** CSDK-005  
-**Severities:** medium  
+**Severities:** low  
 **Fix types:** code  
 **References:** LLM05
 
@@ -57,7 +57,7 @@ unpredictable agent behavior.
 
 ## Rule-by-rule defense
 
-### CSDK-005 — Tool raises exceptions without a structured error contract (Severity: medium, Confidence: 0.6, Fix type: code)
+### CSDK-005 — Tool raises exceptions without a structured error contract (Severity: low, Confidence: 0.6, Fix type: code)
 
 **What we detect:**
 A tool body that contains a `raise` and has no `try`/`except` block
@@ -73,11 +73,13 @@ message may leak internals.
 fault gives the model no "retryable" hint; the model may retry a charge that
 actually went through, or give up on one that would have succeeded on retry.
 
-**Why severity is medium and not high:**
-It degrades reliability and leaks minor internals rather than directly breaching
-the system; a well-behaved caller environment can absorb some of it. It is not
-low because mis-handled errors in side-effecting tools cause real wrong actions
-(double charges, abandoned writes).
+**Why severity is low:**
+A bare `raise` is frequently fine: the Claude Agent SDK, an outer wrapper, or a
+`failure_error_function`-style handler often converts the exception into something
+the model can act on, so this is a reliability-and-hygiene nudge rather than a
+defect. It is not medium because the in-body check cannot see those out-of-body
+handlers and fires on a great deal of correct code — treat it as a prompt to add
+an explicit structured-error contract where one is genuinely missing.
 
 **Fix type — code:**
 Wrap the body and return a structured error — a source edit.

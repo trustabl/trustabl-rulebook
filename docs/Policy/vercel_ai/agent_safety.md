@@ -9,7 +9,7 @@ rules:
     scope: agent
     fix_type: config
   - id: VAI-007
-    severity: medium
+    severity: low
     confidence: 0.6
     scope: agent
     fix_type: config
@@ -26,7 +26,7 @@ references: [LLM06, LLM10]
 **Policy ID:** `vercel_ai_agent_safety`  
 **File:** `vercel_ai/agent_safety.yaml`  
 **Rules:** VAI-006, VAI-007, VAI-008  
-**Severities:** high, medium, medium  
+**Severities:** high, low, medium  
 **Fix types:** config, config, config  
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
@@ -58,12 +58,14 @@ direct path to running attacker-chosen commands or code with the agent's
 privileges (VAI-006). This is excessive agency (LLM06) in its most literal form —
 the agent is one wired tool away from arbitrary execution.
 
-The loop bounds matter because the SDK imposes no default ceiling. A
-`generateText` call with a `tools` record runs a multi-step loop whose only
-stopping condition, absent `stopWhen` / `maxSteps`, is the model deciding to stop
-calling tools (VAI-007). A prompt injection — or a model that loops on a tool
-whose output keeps re-triggering it — runs the loop unbounded, burning tokens,
-hammering every wired tool (including billed or side-effecting ones), and
+The loop bounds matter because the default ceiling is generic, not task-sized. A
+bare `generateText` / `streamText` call does not continue the tool loop without
+`stopWhen`, and the `Agent` / `ToolLoopAgent` class defaults to
+`stopWhen: stepCountIs(20)` — so an agent that omits an explicit bound (VAI-007)
+either silently does not iterate or inherits that generic 20-step ceiling. A
+prompt injection — or a model that loops on a tool whose output keeps
+re-triggering it — can then run up to that default before stopping, burning
+tokens, hammering every wired tool (including billed or side-effecting ones), and
 stalling the request (LLM10). VAI-008 is the interaction of the two: setting
 `toolChoice: "required"` forces a tool call on every step instead of letting the
 model answer directly, so a wired execution tool is far more likely to be invoked
@@ -100,23 +102,25 @@ agent-wiring change, not a tool-source edit. **Confidence 0.85:** a few agents
 legitimately need an execution tool and sandbox it out of band, which the
 class-name match cannot see.
 
-### VAI-007 — Agent tool loop has no step bound (Severity: medium, Confidence: 0.6, Fix type: config)
+### VAI-007 — Agent tool loop has no explicit step bound (Severity: low, Confidence: 0.6, Fix type: config)
 
 **What we detect:** an agent that runs a tool loop but sets neither `stopWhen`
 nor `maxSteps` (predicate `agent_kwarg_missing` for both).
 
-**Why it is flaggable:** with no bound the loop's only stopping condition is the
-model choosing to stop calling tools; an injection or a self-re-triggering tool
-runs it unbounded (LLM10).
+**Why it is flaggable:** absent an explicit bound the loop runs to the SDK's
+generic default (a single step for a bare call, or `stepCountIs(20)` for the
+`Agent` class) rather than a task-sized cap; an injection or a self-re-triggering
+tool can run it up to that ceiling (LLM10).
 
 **Real-world consequence:** a research agent loops on a search tool whose results
 keep prompting another search; with no `maxSteps` it runs hundreds of round-trips,
 burning the token budget and hammering the search API before the request times
 out.
 
-**Why severity is medium and not high:** the usual outcome is a cost/availability
-incident rather than a compromise — recoverable, and only a safety problem when
-the looped tools have side effects. **Fix type — config:** pass `maxSteps` or a
+**Why severity is low:** the SDK already bounds the loop by default, so this flags
+a missing *explicit, task-sized* cap rather than a true runaway — a hygiene nudge
+whose usual worst case is a cost/availability incident, and only a safety problem
+when the looped tools have side effects. **Fix type — config:** pass `maxSteps` or a
 `stopWhen` condition. **Confidence 0.6:** the SDK has multiple evolving stop
 mechanisms (`maxSteps`, `stopWhen`, `stepCountIs`, version differences between v4
 and v5), and an agent bounded by an external timeout or a custom loop guard is
