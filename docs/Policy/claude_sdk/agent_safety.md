@@ -9,7 +9,7 @@ rules:
     scope: agent
     fix_type: config
   - id: CSDK-102
-    severity: high
+    severity: medium
     confidence: 0.8
     scope: agent
     fix_type: config
@@ -51,7 +51,7 @@ references: [LLM01, LLM06]
 **Policy ID:** `claude_sdk_agent_safety`  
 **File:** `claude_sdk/agent_safety.yaml`  
 **Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120, CSDK-130, CSDK-131  
-**Severities:** high, high, high, high, high, high, high, high  
+**Severities:** high, medium, high, high, high, high, high, high  
 **Fix types:** config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
@@ -128,7 +128,7 @@ it with a PreToolUse hook — a wiring change, not tool code.
 **Confidence 0.8:** A subagent may legitimately need shell for its job (a build
 runner); the rule cannot tell a justified grant from an over-broad one, hence 0.8.
 
-### CSDK-102 — Subagent is granted the WebSearch tool (Severity: high, Confidence: 0.8, Fix type: config)
+### CSDK-102 — Subagent is granted the WebSearch tool (Severity: medium, Confidence: 0.8, Fix type: config)
 
 **What we detect:** An `AgentDefinition` whose `tools` list contains `WebSearch`.
 
@@ -139,9 +139,11 @@ injected instructions in results can redirect the subagent.
 "ignore previous instructions…" text becomes part of the context and steers the
 next action.
 
-**Why severity is high and not medium:** Untrusted-content intake is a primary
-prompt-injection vector and there is no SDK-level filtering. Not critical: the
-payload still needs a follow-on capability to do damage.
+**Why severity is medium:** Granting WebSearch is routine and useful, and
+untrusted-content intake only becomes harmful when paired with a follow-on
+capability that can act on the injected instruction — so the grant alone is a
+review signal, not a high-severity defect. It is not low because search results
+are a primary prompt-injection vector with no SDK-level filtering.
 
 **Fix type — config:** Remove `WebSearch`, or gate queries with a PreToolUse hook.
 

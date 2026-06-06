@@ -4,7 +4,7 @@ category: google_adk
 topic: error_handling
 rules:
   - id: ADK-005
-    severity: medium
+    severity: low
     confidence: 0.6
     scope: tool
     fix_type: code
@@ -16,7 +16,7 @@ references: [LLM05]
 **Policy ID:** `google_adk_error_handling`  
 **File:** `google_adk/error_handling.yaml`  
 **Rules:** ADK-005  
-**Severities:** medium  
+**Severities:** low  
 **Fix types:** code  
 **References:** LLM05
 
@@ -49,7 +49,7 @@ contract and surfaces a raw exception instead.
 
 ## Rule-by-rule defense
 
-### ADK-005 — Tool raises exceptions without a structured error contract (Severity: medium, Confidence: 0.6, Fix type: code)
+### ADK-005 — Tool raises exceptions without a structured error contract (Severity: low, Confidence: 0.6, Fix type: code)
 
 **What we detect:** a wrapped-function body with a `raise` and no `try`/`except`.
 
@@ -59,8 +59,10 @@ recovery contract, breaking ADK's return-a-dict convention.
 **Real-world consequence:** a transient fault raised as `ValueError` gives the model
 no "retryable" hint; it retries a completed action or abandons a recoverable one.
 
-**Why severity is medium and not high:** reliability/minor-leak rather than a direct
-breach; mishandled errors in side-effecting tools still cause real wrong actions.
+**Why severity is low:** ADK's return-a-dict convention or an outer wrapper
+commonly shapes the error already, so this is a reliability nudge that fires on a
+lot of correct code; it stays above noise because mishandled errors in
+side-effecting tools can still cause real wrong actions.
 
 **Fix type — code:** wrap the body and return a structured error dict.
 

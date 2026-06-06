@@ -9,7 +9,7 @@ rules:
     scope: tool
     fix_type: code
   - id: CSDK-012
-    severity: medium
+    severity: low
     confidence: 0.5
     scope: tool
     fix_type: code
@@ -21,7 +21,7 @@ references: [LLM02, LLM06]
 **Policy ID:** `claude_sdk_path_safety`  
 **File:** `claude_sdk/path_safety.yaml`  
 **Rules:** CSDK-004, CSDK-012  
-**Severities:** high, medium  
+**Severities:** high, low  
 **Fix types:** code, code  
 **References:** LLM02, LLM06
 
@@ -99,7 +99,7 @@ positive. Conversely, a tool that calls `.resolve()` but never checks containmen
 passes the rule yet is still unsafe — a false negative the rule cannot close,
 which is why containment lives in the recommendations.
 
-### CSDK-012 — TypeScript Claude SDK tool writes to the filesystem (Severity: medium, Confidence: 0.5, Fix type: code)
+### CSDK-012 — TypeScript Claude SDK tool writes to the filesystem (Severity: low, Confidence: 0.5, Fix type: code)
 
 **What we detect:**
 A TypeScript Claude SDK `tool(...)` whose handler body invokes a filesystem-write
@@ -131,13 +131,13 @@ A `saveNote(name, body)` tool doing `writeFileSync(name, body)` is steered into
 `writeFileSync("../../.bashrc", payload)` or into overwriting a config file to
 widen the agent's own permissions.
 
-**Why severity is medium and not high:**
-This is deliberately one notch below the Python sibling's high precisely because
-the signal is coarse. The rule fires on *any* write — including writes to a
-hard-coded safe path with no model influence — so a large fraction of hits are not
-exploitable. Pairing a low-precision detector with a high severity would
-overstate the finding; medium reflects that this is a lead to confirm, not a
-near-certain defect.
+**Why severity is low:**
+This is the weakest detector in the file. It fires on *any* write — including
+writes to a hard-coded safe path with no model influence — and has no path-flow
+analysis behind it, so a large fraction of hits are not exploitable. Pairing a
+low-precision detector with anything above low would overstate a lead that is
+about as likely benign as not; low marks it as a prompt to confirm the path or
+contents are model-influenced, not a defect.
 
 **Fix type — code:**
 Confining writes to a working directory and resolving/validating the final path is

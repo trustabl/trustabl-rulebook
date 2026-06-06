@@ -4,8 +4,8 @@ category: autogen
 topic: network
 rules:
   - id: AG2-012
-    severity: medium
-    confidence: 0.8
+    severity: high
+    confidence: 0.85
     scope: tool
     fix_type: code
 references: [LLM10]
@@ -16,7 +16,7 @@ references: [LLM10]
 **Policy ID:** `autogen_network`  
 **File:** `autogen/network.yaml`  
 **Rules:** AG2-012  
-**Severities:** medium  
+**Severities:** high  
 **Fix types:** code  
 **References:** LLM10 (Unbounded Consumption)
 
@@ -50,7 +50,7 @@ one turn.
 
 ## Rule-by-rule defense
 
-### AG2-012 — Tool network call has no timeout (Severity: medium, Confidence: 0.8, Fix type: code)
+### AG2-012 — Tool network call has no timeout (Severity: high, Confidence: 0.85, Fix type: code)
 
 **What we detect:** an AutoGen tool body that calls a `requests.*` / `httpx.*`
 request function with no `timeout=` keyword (predicate `call_without_kwarg`).
@@ -63,10 +63,12 @@ socket dies.
 with no timeout; a slow upstream makes the agent hang for minutes per call, and
 under concurrent load the host runs out of connections while every agent waits.
 
-**Why severity is medium and not high:** the impact is an availability/cost
-incident, not a compromise — recoverable, and only triggered by a slow or
-unresponsive remote rather than on every call. **Fix type — code:** adding
-`timeout=` is a tool-source edit. **Confidence 0.8:** the rule looks for the
+**Why severity is high:** this matches the timeout rules in every other SDK pack
+(CSDK-003, MCP-004, OAI-005, ADK-003, PYD-006), which all rate a missing timeout
+high. A hung call with no tool-level timeout stalls the whole agent loop — and, in
+a group chat, the whole conversation — and the failure never surfaces to the
+model, so the blast radius is the agent's availability, not a single turn. **Fix type — code:** adding
+`timeout=` is a tool-source edit. **Confidence 0.85:** the rule looks for the
 `timeout` kwarg on the recognized callees, so it over-fires when a timeout is set
 another way (a session-level default, an `httpx.Client(timeout=...)` the call
 inherits) and under-fires on request libraries outside the recognized

@@ -4,7 +4,7 @@ category: openai_sdk
 topic: error_handling
 rules:
   - id: OAI-008
-    severity: medium
+    severity: low
     confidence: 0.6
     scope: tool
     fix_type: code
@@ -16,7 +16,7 @@ references: [LLM05]
 **Policy ID:** `openai_sdk_error_handling`  
 **File:** `openai_sdk/error_handling.yaml`  
 **Rules:** OAI-008  
-**Severities:** medium  
+**Severities:** low  
 **Fix types:** code  
 **References:** LLM05
 
@@ -53,7 +53,7 @@ the most common false positive for OAI-008.
 
 ## Rule-by-rule defense
 
-### OAI-008 — Tool raises exceptions without a structured error contract (Severity: medium, Confidence: 0.6, Fix type: code)
+### OAI-008 — Tool raises exceptions without a structured error contract (Severity: low, Confidence: 0.6, Fix type: code)
 
 **What we detect:** a tool body with a `raise` and no `try`/`except`.
 
@@ -64,8 +64,10 @@ string with no recovery contract, and may carry internal detail.
 on a transient fault gives the model no "retryable" hint; it may retry a completed
 charge or abandon a recoverable one.
 
-**Why severity is medium and not high:** reliability/minor-leak rather than a direct
-breach; mishandled errors in side-effecting tools still cause real wrong actions.
+**Why severity is low:** the SDK's `failure_error_function` (or an outer handler)
+commonly shapes the error already, so this is a reliability nudge that fires on a
+lot of correct code; it stays above noise because mishandled errors in
+side-effecting tools can still cause real wrong actions.
 
 **Fix type — code:** wrap the body and return a structured error.
 

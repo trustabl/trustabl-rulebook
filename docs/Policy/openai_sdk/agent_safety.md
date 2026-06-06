@@ -34,7 +34,7 @@ rules:
     scope: agent
     fix_type: config
   - id: OAI-110
-    severity: high
+    severity: medium
     confidence: 0.6
     scope: agent
     fix_type: config
@@ -46,7 +46,7 @@ references: [LLM01, LLM06]
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
 **Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110  
-**Severities:** high, high, high, medium, high, high, high  
+**Severities:** high, high, high, medium, high, high, medium  
 **Fix types:** config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
@@ -238,7 +238,7 @@ reach `WebSearchTool`.
 
 **Confidence 0.85:** the agent might screen by another route the rule cannot see.
 
-### OAI-110 — Content-fetching tool without output_guardrails (Severity: high, Confidence: 0.6, Fix type: config)
+### OAI-110 — Content-fetching tool without output_guardrails (Severity: medium, Confidence: 0.6, Fix type: config)
 
 **What we detect:** empty `output_guardrails` while the agent wires `WebSearchTool`,
 `FileSearchTool`, or `CodeInterpreterTool`.
@@ -250,8 +250,11 @@ can drive an exfiltrating or unsafe answer with nothing inspecting what leaves.
 **Real-world consequence:** injected content in a fetched document steers the final
 response to leak data, unscreened.
 
-**Why high not medium:** egress screening is the last line before the user/caller, and
-it is absent on an agent that ingests untrusted content.
+**Why severity is medium:** output guardrails are far from universally adopted, and
+many content-fetching agents handle only low-risk public data, so a missing egress
+screen is often acceptable (see the 0.6 confidence). It stays above low because, on
+an agent that ingests untrusted content and can act on it, the absent screen is the
+last line before the user/caller.
 
 **Fix type — config:** add an `@output_guardrail` and wire `output_guardrails=[...]`.
 
