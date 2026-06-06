@@ -33,6 +33,16 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-017
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: MCP-018
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -40,7 +50,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -54,11 +64,12 @@ references: [LLM06]
 The structural hygiene of Model Context Protocol tool registrations — the
 Python decorator forms (`@server.tool` / `@mcp.tool` / `.register_tool`,
 predicate `mcp_tool` kind) and the TypeScript `@modelcontextprotocol/sdk`
-`server.registerTool(...)` / `server.tool(...)` forms, and the Go SDKs
+`server.registerTool(...)` / `server.tool(...)` forms, the Go SDKs
 (mark3labs/mcp-go's `mcp.NewTool(...)` and the official go-sdk's
-`mcp.AddTool(server, &mcp.Tool{...}, fn)`). MCP-001/002/003 are the Python
-rules; MCP-011 is the TypeScript description rule; MCP-015 (no description) and
-MCP-016 (ambiguous name) are the Go rules.
+`mcp.AddTool(server, &mcp.Tool{...}, fn)`), and the official C# SDK's
+`[McpServerTool]`-attributed methods. MCP-001/002/003 are the Python rules;
+MCP-011 is the TypeScript description rule; MCP-015/016 are the Go rules;
+MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules.
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
@@ -143,6 +154,26 @@ ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
 no intent signal and collides across servers in a shared session, and the cost is
 paid by every uncontrolled consumer of the published catalog.
 
+### MCP-017 — C# MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** an `[McpServerTool]`-attributed C# method with no co-located
+`[Description("...")]` attribute (`has_docstring: false`, reading the captured
+`Description`).
+
+**Why it is flaggable:** identical mechanism to MCP-001 / MCP-011 / MCP-015 on
+the official ModelContextProtocol C# SDK — `[Description]` is what the server
+advertises to connecting clients as the model's routing signal. Confidence 0.85
+mirrors the other description rules.
+
+### MCP-018 — Ambiguous C# MCP tool name (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** an `[McpServerTool]` method whose name (the method name — the
+SDK default) is in the fixed ambiguous set (`process`, `handle`, `run`, ...) via
+`name_in` (case-insensitive, so PascalCase `Process` matches).
+
+**Why it is flaggable:** identical to MCP-003 / MCP-016 — an ambiguous name gives
+the model no intent signal and collides across servers in a shared session.
+
 ---
 
 ## What this policy does not cover
@@ -155,4 +186,8 @@ per-tool definition is extracted). Resource and prompt registrations
 yet discovered. For Go, untyped-params has no analog (Go is statically typed, so
 there is no MCP-002 equivalent), the official SDK's handler-struct input schema
 and metoro-io/mcp-golang's reflection-based `RegisterTool` are not yet extracted,
-and body-fact rules (shell / SSRF / timeout) await Go AST predicates.
+and body-fact rules (shell / SSRF / timeout) await Go AST predicates. For C#,
+untyped-params likewise has no analog (C# is statically typed), the
+`[McpServerTool(Name = "...")]` name override is not read, and body-fact rules
+plus the Semantic Kernel `[KernelFunction]` / AutoGen `[Function]` shapes await
+later work.
