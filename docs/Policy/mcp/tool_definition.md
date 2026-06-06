@@ -23,6 +23,16 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-015
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: MCP-016
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -30,7 +40,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -44,8 +54,11 @@ references: [LLM06]
 The structural hygiene of Model Context Protocol tool registrations — the
 Python decorator forms (`@server.tool` / `@mcp.tool` / `.register_tool`,
 predicate `mcp_tool` kind) and the TypeScript `@modelcontextprotocol/sdk`
-`server.registerTool(...)` / `server.tool(...)` forms. MCP-001/002/003 are the
-Python rules; MCP-011 is the TypeScript description rule.
+`server.registerTool(...)` / `server.tool(...)` forms, and the Go SDKs
+(mark3labs/mcp-go's `mcp.NewTool(...)` and the official go-sdk's
+`mcp.AddTool(server, &mcp.Tool{...}, fn)`). MCP-001/002/003 are the Python
+rules; MCP-011 is the TypeScript description rule; MCP-015 (no description) and
+MCP-016 (ambiguous name) are the Go rules.
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
@@ -107,6 +120,29 @@ the registration config's `description` is the model's routing signal. Confidenc
 0.85 (vs MCP-001's 0.9) reflects that the TypeScript capture can miss a
 description supplied through an unusual expression shape.
 
+### MCP-015 — Go MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a Go MCP tool whose description is empty
+(`has_docstring: false`, reading the captured `Description`) — a mark3labs
+`mcp.NewTool("name", ...)` with no `mcp.WithDescription(...)` option, or an
+official-SDK `mcp.Tool{...}` with no `Description` field.
+
+**Why it is flaggable:** identical mechanism to MCP-001 / MCP-011 on the Go
+SDKs — the description is what the server advertises to connecting clients as the
+model's routing signal. Confidence 0.85 mirrors the other description rules; the
+residual gap is a description supplied through a non-literal expression, captured
+as empty.
+
+### MCP-016 — Ambiguous Go MCP tool name (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a Go MCP tool whose name — the first argument to
+`mcp.NewTool(...)`, or the `Name` field of an `mcp.Tool` — is in the fixed
+ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
+
+**Why it is flaggable:** identical to MCP-003 — an ambiguous name gives the model
+no intent signal and collides across servers in a shared session, and the cost is
+paid by every uncontrolled consumer of the published catalog.
+
 ---
 
 ## What this policy does not cover
@@ -116,4 +152,7 @@ and the low-level `Server` + `setRequestHandler` authoring shape (tools there ar
 returned from a `ListTools` handler, not named at a registration call site, so no
 per-tool definition is extracted). Resource and prompt registrations
 (`@mcp.resource` / `@mcp.prompt`, `registerResource` / `registerPrompt`) are not
-yet discovered.
+yet discovered. For Go, untyped-params has no analog (Go is statically typed, so
+there is no MCP-002 equivalent), the official SDK's handler-struct input schema
+and metoro-io/mcp-golang's reflection-based `RegisterTool` are not yet extracted,
+and body-fact rules (shell / SSRF / timeout) await Go AST predicates.
