@@ -53,6 +53,16 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-021
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: MCP-022
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -60,7 +70,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -81,7 +91,9 @@ predicate `mcp_tool` kind) and the TypeScript `@modelcontextprotocol/sdk`
 community php-mcp/server) `#[McpTool]`-attributed methods. MCP-001/002/003 are
 the Python rules; MCP-011 is the TypeScript description rule; MCP-015/016 are the
 Go rules; MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules;
-MCP-019 (no description) and MCP-020 (ambiguous name) are the PHP rules.
+MCP-019 (no description) and MCP-020 (ambiguous name) are the PHP rules; MCP-021
+(no description) and MCP-022 (ambiguous name) are the Rust rules (official rmcp
+crate, `#[tool]`-attributed methods).
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
@@ -211,6 +223,32 @@ name gives the model no intent signal and collides across servers in a shared
 session, and the cost is paid by every uncontrolled consumer of the published
 catalog.
 
+### MCP-021 — Rust MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a `#[tool]`-attributed Rust method (official rmcp crate) with
+no description (`has_docstring: false`, reading the captured `Description`). rmcp
+derives a tool's description from **either** a `description = "..."` attribute
+argument **or** the method's `///` doc comment, so discovery checks both — a tool
+documented the idiomatic Rust way (a `///` comment, no attribute arg) is correctly
+treated as *having* a description and does not fire.
+
+**Why it is flaggable:** identical mechanism to MCP-001 / MCP-011 / MCP-015 /
+MCP-017 / MCP-019 on the rmcp SDK — the description is what the server advertises
+to connecting clients as the model's routing signal. Confidence 0.85 mirrors the
+other description rules; the residual gap is a description supplied through a
+raw-string or non-literal expression, captured as empty.
+
+### MCP-022 — Ambiguous Rust MCP tool name (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a `#[tool]` method whose name — the attribute's `name = "..."`
+argument, or the method name when that argument is omitted — is in the fixed
+ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
+
+**Why it is flaggable:** identical to MCP-003 / MCP-016 / MCP-018 / MCP-020 — an
+ambiguous name gives the model no intent signal and collides across servers in a
+shared session, and the cost is paid by every uncontrolled consumer of the
+published catalog.
+
 ---
 
 ## What this policy does not cover
@@ -232,4 +270,8 @@ grammar parses single-line attributes as comments), `#[McpResource]` /
 `#[McpPrompt]` are not discovered, and body-fact rules await PHP AST predicates;
 unlike Go and C#, PHP type hints are optional, so an untyped-params analog of
 MCP-002 *is* meaningful — discovery already captures `HasTypedParams`, and that
-rule is a deliberate fast-follow rather than not applicable.
+rule is a deliberate fast-follow rather than not applicable. For Rust,
+untyped-params has no analog (Rust is statically typed, and the input schema lives
+in a separate `#[derive(JsonSchema)]` struct passed via `Parameters<T>`, which is
+not yet resolved); raw-string descriptions, `#[tool]` on free functions outside an
+`impl`, the `#[prompt]` / resource shapes, and body-fact rules await later work.
