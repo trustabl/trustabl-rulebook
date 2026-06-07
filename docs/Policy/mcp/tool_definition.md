@@ -43,6 +43,16 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-019
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: MCP-020
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -50,7 +60,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -66,10 +76,12 @@ Python decorator forms (`@server.tool` / `@mcp.tool` / `.register_tool`,
 predicate `mcp_tool` kind) and the TypeScript `@modelcontextprotocol/sdk`
 `server.registerTool(...)` / `server.tool(...)` forms, the Go SDKs
 (mark3labs/mcp-go's `mcp.NewTool(...)` and the official go-sdk's
-`mcp.AddTool(server, &mcp.Tool{...}, fn)`), and the official C# SDK's
-`[McpServerTool]`-attributed methods. MCP-001/002/003 are the Python rules;
-MCP-011 is the TypeScript description rule; MCP-015/016 are the Go rules;
-MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules.
+`mcp.AddTool(server, &mcp.Tool{...}, fn)`), the official C# SDK's
+`[McpServerTool]`-attributed methods, and the PHP SDKs' (official mcp/sdk +
+community php-mcp/server) `#[McpTool]`-attributed methods. MCP-001/002/003 are
+the Python rules; MCP-011 is the TypeScript description rule; MCP-015/016 are the
+Go rules; MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules;
+MCP-019 (no description) and MCP-020 (ambiguous name) are the PHP rules.
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
@@ -174,6 +186,31 @@ SDK default) is in the fixed ambiguous set (`process`, `handle`, `run`, ...) via
 **Why it is flaggable:** identical to MCP-003 / MCP-016 — an ambiguous name gives
 the model no intent signal and collides across servers in a shared session.
 
+### MCP-019 — PHP MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a `#[McpTool]`-attributed PHP method whose attribute carries
+no `description:` argument (`has_docstring: false`, reading the captured
+`Description`). The smacker tree-sitter-php grammar parses a single-line `#[...]`
+attribute as a comment, so discovery reads the `description:` argument out of the
+attribute's comment text.
+
+**Why it is flaggable:** identical mechanism to MCP-001 / MCP-011 / MCP-015 /
+MCP-017 on the PHP MCP SDKs — the attribute's `description:` is what the server
+advertises to connecting clients as the model's routing signal. Confidence 0.85
+mirrors the other description rules; the residual gap is a multi-line attribute
+form, which discovery does not currently read.
+
+### MCP-020 — Ambiguous PHP MCP tool name (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a `#[McpTool]` method whose name — the attribute's `name:`
+argument, or the method name when that argument is omitted — is in the fixed
+ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
+
+**Why it is flaggable:** identical to MCP-003 / MCP-016 / MCP-018 — an ambiguous
+name gives the model no intent signal and collides across servers in a shared
+session, and the cost is paid by every uncontrolled consumer of the published
+catalog.
+
 ---
 
 ## What this policy does not cover
@@ -190,4 +227,9 @@ and body-fact rules (shell / SSRF / timeout) await Go AST predicates. For C#,
 untyped-params likewise has no analog (C# is statically typed), the
 `[McpServerTool(Name = "...")]` name override is not read, and body-fact rules
 plus the Semantic Kernel `[KernelFunction]` / AutoGen `[Function]` shapes await
-later work.
+later work. For PHP, the multi-line `#[...]` attribute form is not read (the
+grammar parses single-line attributes as comments), `#[McpResource]` /
+`#[McpPrompt]` are not discovered, and body-fact rules await PHP AST predicates;
+unlike Go and C#, PHP type hints are optional, so an untyped-params analog of
+MCP-002 *is* meaningful — discovery already captures `HasTypedParams`, and that
+rule is a deliberate fast-follow rather than not applicable.
