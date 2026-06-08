@@ -48,22 +48,28 @@ rules:
     confidence: 0.8
     scope: skill
     fix_type: config
-references: [LLM01, LLM02, LLM03, LLM06]
+  - id: CSKILL-060
+    severity: medium
+    confidence: 0.5
+    scope: skill
+    fix_type: config
+references: [LLM01, LLM02, LLM03, LLM06, AST03, AST04, AST05, AST08, ASI04]
 ---
 
 # Policy Rationale: Agent Skill Safety
 
 **Policy ID:** `claude_skill_safety`  
 **File:** `claude_skill/skill_safety.yaml`  
-**Rules:** CSKILL-001, CSKILL-002, CSKILL-003, CSKILL-010, CSKILL-011, CSKILL-030, CSKILL-020, CSKILL-040, CSKILL-050  
-**Severities:** critical, high, critical, high, critical, high, medium, medium, high  
+**Rules:** CSKILL-001, CSKILL-002, CSKILL-003, CSKILL-010, CSKILL-011, CSKILL-030, CSKILL-020, CSKILL-040, CSKILL-050, CSKILL-060  
+**Severities:** critical, high, critical, high, critical, high, medium, medium, high, medium  
 **Fix types:** config (SKILL.md edits) + code (bundled-file edits for CSKILL-010/011/030)  
-**References:** LLM01, LLM02, LLM03, LLM06
+**References:** OWASP LLM Top 10:2025 — LLM01, LLM02, LLM03, LLM06 · OWASP Agentic Skills Top 10 — AST03, AST04, AST05, AST08 · OWASP ASI — ASI04
 
-> Bundled-file content analysis now ships: CSKILL-010/011 (network egress and
-> credential reads in bundled scripts) and CSKILL-030 (a hardcoded secret
-> committed in a bundled file). Description-vs-capability matching remains the
-> one planned-but-unshipped rule — it needs heuristic capability comparison.
+> Bundled-file content analysis ships (CSKILL-010/011: egress + credential reads;
+> CSKILL-030: a committed secret), and CSKILL-060 catches the explicit
+> description-vs-capability mismatch (a read-only *claim* contradicted by
+> side-effecting grants). The broader heuristic — judging an implicitly
+> read-only-*sounding* description with no explicit claim — remains future work.
 
 ---
 
@@ -85,6 +91,16 @@ found a security flaw in roughly a third of skills, with script-bundling skills
 markedly worse than instruction-only ones. Skills are third-party code you
 execute; these rules flag the patterns that make a skill dangerous on
 activation.
+
+**Standards mapping.** These rules map to the **OWASP Agentic Skills Top 10**
+(AST): over-privileged grants (**AST03**); metadata that misrepresents capability
+— hidden-Unicode/base64 instructions and read-only claims that don't match the
+grants (**AST04**); and prompt-injection via skill content (**AST05**), with an
+ASI cross-reference (**ASI04**). The pack is itself Trustabl's deterministic
+answer to **AST08 (Poor Scanning)** — the AI-specific, static, no-network skill
+analysis that AST08 observes traditional tools lack. We cite the taxonomy IDs
+only; every consequence a rule names is argued from mechanism below, not from any
+external incident claim.
 
 ---
 
@@ -280,6 +296,25 @@ tools then act without the user choosing to (LLM06).
 specific; the residual gap is a skill that legitimately wants model invocation
 *and* a write tool (rare for a safe design).
 
+### CSKILL-060 — Skill description claims read-only but grants side-effecting tools (medium, 0.5, config)
+
+**What we detect:** The description explicitly claims to be read-only or
+side-effect-free (e.g. "read-only", "does not modify", "cannot run commands")
+while `allowed-tools` pre-approve a side-effecting tool — Bash / Write / Edit /
+WebFetch / NotebookEdit, or unrestricted shell (`skill_description_tool_mismatch`).
+
+**Why it is flaggable:** The description is the metadata a user reads to decide
+whether to trust a skill — OWASP Agentic Skills Top 10 **AST04 (Insecure
+Metadata)**: metadata that misrepresents capability. A read-only claim
+contradicted by a side-effecting grant is a deception the reviewer cannot see
+from the description alone, and the grant itself is over-privilege (**AST03**).
+
+**Why medium / confidence 0.5:** Deliberately narrow — it fires only on an
+explicit read-only *claim* contradicted by a real grant, not on every
+benign-sounding description — but the read-only-claim regex is a heuristic that
+can match incidental phrasing, so it ships at the pack's lowest confidence as a
+review nudge. The broader "implicitly read-only-sounding" case is out of scope.
+
 ---
 
 ## What this policy does not cover (v1)
@@ -292,8 +327,10 @@ specific; the residual gap is a skill that legitimately wants model invocation
   bundled-file content for known provider-token / private-key formats; a secret
   literal in the `SKILL.md` body, or a custom/high-entropy secret with no
   recognizable prefix, is not yet flagged.
-- **Description-vs-capability mismatch** — judging a "read-only-sounding"
-  description against its grants is heuristic and FP-prone; deferred.
+- **Implicit description-vs-capability mismatch.** CSKILL-060 catches an
+  *explicit* read-only claim contradicted by side-effecting grants; judging an
+  implicitly read-only-*sounding* description (with no explicit claim) against
+  its grants is heuristic and FP-prone, and remains deferred.
 - **Obfuscated payloads** — aliased/encoded dynamic-context commands evade the
   egress/secret regex; a determined attacker can hide intent.
 - **Whether `disableSkillShellExecution` is set** in managed settings (which
