@@ -28,6 +28,11 @@ rules:
     confidence: 0.8
     scope: skill
     fix_type: code
+  - id: CSKILL-030
+    severity: high
+    confidence: 0.85
+    scope: skill
+    fix_type: code
   - id: CSKILL-020
     severity: medium
     confidence: 0.7
@@ -50,16 +55,15 @@ references: [LLM01, LLM02, LLM03, LLM06]
 
 **Policy ID:** `claude_skill_safety`  
 **File:** `claude_skill/skill_safety.yaml`  
-**Rules:** CSKILL-001, CSKILL-002, CSKILL-003, CSKILL-010, CSKILL-011, CSKILL-020, CSKILL-040, CSKILL-050  
-**Severities:** critical, high, critical, high, critical, medium, medium, high  
-**Fix types:** config (SKILL.md edits) + code (bundled-script edits for CSKILL-010/011)  
+**Rules:** CSKILL-001, CSKILL-002, CSKILL-003, CSKILL-010, CSKILL-011, CSKILL-030, CSKILL-020, CSKILL-040, CSKILL-050  
+**Severities:** critical, high, critical, high, critical, high, medium, medium, high  
+**Fix types:** config (SKILL.md edits) + code (bundled-file edits for CSKILL-010/011/030)  
 **References:** LLM01, LLM02, LLM03, LLM06
 
-> Bundled-script content analysis now ships (CSKILL-010/011: network egress and
-> credential reads inside bundled scripts). Hardcoded-secret scanning
-> (CSKILL-030) and description-vs-capability matching remain planned — they need
-> further discovery (secret scanning; heuristic capability comparison) — and are
-> not yet shipped.
+> Bundled-file content analysis now ships: CSKILL-010/011 (network egress and
+> credential reads in bundled scripts) and CSKILL-030 (a hardcoded secret
+> committed in a bundled file). Description-vs-capability matching remains the
+> one planned-but-unshipped rule — it needs heuristic capability comparison.
 
 ---
 
@@ -207,6 +211,31 @@ activation and hidden from review. Confidence 0.8: the secret-read heuristic can
 match a legitimate credential-management script, so a small false-positive margin
 is priced in below the auto-shell rules.
 
+### CSKILL-030 — Bundled skill file contains a hardcoded secret (high, 0.85, code)
+
+**What we detect:** A non-binary bundled file contains a hardcoded secret literal
+— a recognizable provider token (AWS `AKIA…`, GitHub `ghp_…` / `github_pat_…`,
+Slack `xox…`, Google `AIza…`), an OpenAI-style `sk-…` key, or a private-key
+header — matched by format/context, not entropy
+(`skill_bundled_file_has_hardcoded_secret`).
+
+**Why it is flaggable:** A credential committed into a skill ships to everyone
+who installs or forks it, lives forever in the repository's history, and is
+trivially harvested by anyone scraping public repos. This is distinct from
+CSKILL-011 (a script that *reads* a secret at runtime): here the secret *is* the
+file's content.
+
+**Real-world consequence:** A skill that bundles a `config/*.env` or
+`credentials` file with a live AWS key — the secret is exposed the moment the
+skill is published, independent of whether the skill ever runs.
+
+**Why high / confidence 0.85:** A committed live credential is a real exposure,
+but a match can be a revoked or example key, so it is high rather than critical —
+yet the provider-prefix / key-header formats are distinctive enough that
+confidence sits above the heuristic rules. Format/context over entropy keeps
+false positives near zero; the trade-off is missing custom or high-entropy
+secrets with no recognizable prefix.
+
 ### CSKILL-020 — Skill fetches untrusted external content (medium, 0.7, config)
 
 **What we detect:** The body references an external `http(s)` URL
@@ -259,7 +288,10 @@ specific; the residual gap is a skill that legitimately wants model invocation
   bundled scripts for network egress and credential reads, but other in-script
   risks (destructive filesystem ops, obfuscated/encoded payloads that evade the
   regex) are not yet modeled.
-- **Hardcoded secrets** in `SKILL.md` or bundled files. (Planned: CSKILL-030.)
+- **Secrets in `SKILL.md` itself, or in unrecognized formats.** CSKILL-030 scans
+  bundled-file content for known provider-token / private-key formats; a secret
+  literal in the `SKILL.md` body, or a custom/high-entropy secret with no
+  recognizable prefix, is not yet flagged.
 - **Description-vs-capability mismatch** — judging a "read-only-sounding"
   description against its grants is heuristic and FP-prone; deferred.
 - **Obfuscated payloads** — aliased/encoded dynamic-context commands evade the
