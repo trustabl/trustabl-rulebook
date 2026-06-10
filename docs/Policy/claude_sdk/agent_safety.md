@@ -14,7 +14,7 @@ rules:
     scope: agent
     fix_type: config
   - id: CSDK-103
-    severity: high
+    severity: critical
     confidence: 0.9
     scope: agent
     fix_type: config
@@ -29,7 +29,7 @@ rules:
     scope: agent
     fix_type: config
   - id: CSDK-120
-    severity: high
+    severity: critical
     confidence: 0.9
     scope: agent
     fix_type: config
@@ -51,7 +51,7 @@ references: [LLM01, LLM06]
 **Policy ID:** `claude_sdk_agent_safety`  
 **File:** `claude_sdk/agent_safety.yaml`  
 **Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120, CSDK-130, CSDK-131  
-**Severities:** high, medium, high, high, high, high, high, high  
+**Severities:** high, medium, critical, high, high, critical, high, high  
 **Fix types:** config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
@@ -150,7 +150,7 @@ are a primary prompt-injection vector with no SDK-level filtering.
 **Confidence 0.8:** Some subagents genuinely need search; the grant alone is a
 strong but not certain signal.
 
-### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions (Severity: high, Confidence: 0.9, Fix type: config)
+### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions (Severity: critical, Confidence: 0.9, Fix type: config)
 
 **What we detect:** `permissionMode="bypassPermissions"` on the AgentDefinition
 (`agent_kwarg_value`).
@@ -162,8 +162,12 @@ tool the subagent runs — the one control between model output and side effects
 model-chosen commands and file writes unattended; a single injection becomes an
 unguarded action.
 
-**Why severity is high and not medium:** It removes the in-band safety control
-wholesale. Highest confidence in the file because the value is read directly.
+**Why severity is critical and not high:** It removes the in-band safety control
+wholesale — not a missing guardrail but the deliberate disabling of the only one,
+on by default for every tool the subagent runs. A single fatal switch of this
+kind is exactly what a mean-based readiness score dilutes, so it is rated
+critical to trip the deployment gate's critical-override directly. Highest
+confidence in the file because the value is read directly.
 
 **Fix type — config:** Drop the kwarg or set `default`/`acceptEdits`; reserve
 bypass for sandboxed, non-interactive contexts.
@@ -214,13 +218,13 @@ allowlists hosts and blocks internal ranges (see also [ssrf.md](ssrf.md)).
 
 **Confidence 0.75:** Legitimate fetch use is frequent; treat as a review prompt.
 
-### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions (Severity: high, Confidence: 0.9, Fix type: config)
+### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions (Severity: critical, Confidence: 0.9, Fix type: config)
 
 **What we detect:** A TypeScript `AgentDefinition` with the kwarg
 `permissionMode: "bypassPermissions"` (predicate `agent_kwarg_value`, matching
 kwarg `permissionMode` against the literal value `bypassPermissions`). This is the
 TypeScript twin of the Python rule
-[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-severity-high-confidence-09-fix-type-config);
+[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-severity-critical-confidence-09-fix-type-config);
 the predicate reads the value directly off the constructor.
 
 **Why it is flaggable:** It disables the SDK's interactive approval gate for
@@ -233,9 +237,12 @@ per-call confirmation.
 model-chosen commands and file writes unattended; a single prompt-injected
 instruction becomes an unguarded action with no human in the loop.
 
-**Why severity is high and not medium:** It removes the in-band safety control
-wholesale, exactly as the Python sibling does. Highest-confidence rule in the file
-because the value is read directly from the declaration.
+**Why severity is critical and not high:** It removes the in-band safety control
+wholesale, exactly as the Python sibling does — the deliberate disabling of the
+only gate between model output and a real side effect. Rated critical so the
+deployment readiness gate's critical-override blocks the agent outright.
+Highest-confidence rule in the file because the value is read directly from the
+declaration.
 
 **Fix type — config:** Drop the kwarg or set a safe mode (`"default"` /
 `"acceptEdits"`), and restrict the tool surface with `allowedTools` /

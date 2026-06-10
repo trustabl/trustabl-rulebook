@@ -4,12 +4,12 @@ category: claude_sdk
 topic: repo
 rules:
   - id: CSDK-201
-    severity: high
+    severity: critical
     confidence: 0.9
     scope: repo
     fix_type: config
   - id: CSDK-202
-    severity: high
+    severity: critical
     confidence: 0.9
     scope: repo
     fix_type: config
@@ -21,7 +21,7 @@ references: [LLM06]
 **Policy ID:** `claude_sdk_repo`  
 **File:** `claude_sdk/repo.yaml`  
 **Rules:** CSDK-201, CSDK-202  
-**Severities:** high, high  
+**Severities:** critical, critical  
 **Fix types:** config, config  
 **References:** LLM06
 
@@ -67,7 +67,7 @@ highest-leverage findings to act on.
 
 ## Rule-by-rule defense
 
-### CSDK-201 — Project default permission mode bypasses approvals (Severity: high, Confidence: 0.9, Fix type: config)
+### CSDK-201 — Project default permission mode bypasses approvals (Severity: critical, Confidence: 0.9, Fix type: config)
 
 **What we detect:**
 A `.claude/settings.json` (or `settings.local.json`) anywhere in the repo whose
@@ -85,11 +85,16 @@ prompt-injected instruction in any document the agent reads can drive an
 unguarded `rm`, an exfiltrating network call, or a credential-file read — on the
 machine of *anyone* who cloned the repo, not just the author.
 
-**Why severity is high and not medium:**
+**Why severity is critical and not high:**
 It removes the only in-band approval control, repo-wide and for every
-contributor. It is not critical only because exploitation still requires the
-agent to be driven to a harmful action (injection or error); the setting itself
-is the enabling condition, not the exploit.
+contributor — a single switch that disables the gate between model output and
+every tool's side effects. The earlier framing rated it high on the grounds that
+the setting is the enabling condition rather than the exploit itself; the
+deployment-readiness gate makes that distinction the wrong cut. A mean-based
+readiness score dilutes one fatal setting across many clean surfaces, so a
+repo-wide approval bypass must be rated critical to trip the gate's
+critical-override and block deployment outright — which is the verdict a human
+reviewer gives it.
 
 **Fix type — config:**
 Remove the entry or change it to `default` (prompt on every tool call) or
@@ -103,7 +108,7 @@ are rare — limited to a settings file that is present but unused (e.g. an exam
 config not loaded by the running agent). False negatives: a bypass set only at
 runtime via the SDK rather than in settings is CSDK-202's job, not this rule's.
 
-### CSDK-202 — Session permission mode bypasses approvals (Severity: high, Confidence: 0.9, Fix type: config)
+### CSDK-202 — Session permission mode bypasses approvals (Severity: critical, Confidence: 0.9, Fix type: config)
 
 **What we detect:**
 A `ClaudeAgentOptions(...)` construction in code that sets
@@ -123,11 +128,13 @@ acts without confirmation wherever it runs — a server handling untrusted user
 input, or a desktop app on an end-user's machine. One injected instruction
 becomes an unguarded action with the process's full privileges.
 
-**Why severity is high and not medium:**
+**Why severity is critical and not high:**
 Identical blast radius to CSDK-201 — the approval control is gone for every tool
-— and it executes in production paths, not just developer clones. Not critical
-for the same reason: the bypass is the enabling condition, not the exploit
-itself.
+— and it executes in production paths, not just developer clones, which if
+anything makes it worse. Rated critical for the same reason its sibling is: a
+single fatal approval-bypass switch must reach the deployment gate's
+critical-override rather than being averaged away by a mean-based readiness
+score.
 
 **Fix type — config:**
 Drop the kwarg or set it to `default` / `acceptEdits`. It is a constructor

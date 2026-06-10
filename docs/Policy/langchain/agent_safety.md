@@ -4,7 +4,7 @@ category: langchain
 topic: agent_safety
 rules:
   - id: LC-101
-    severity: high
+    severity: critical
     confidence: 0.85
     scope: agent
     fix_type: code
@@ -26,7 +26,7 @@ references: [LLM06, LLM10]
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
 **Rules:** LC-101, LC-102, LC-111
-**Severities:** high, low, low
+**Severities:** critical, low, low
 **Fix types:** code, config, config
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
@@ -47,7 +47,7 @@ are assembled across many call sites, so it is not yet modeled as a single agent
 
 ## Rule-by-rule defense
 
-### LC-101 — Agent wires a code-execution or shell built-in tool (Severity: high, Confidence: 0.85, Fix type: code)
+### LC-101 — Agent wires a code-execution or shell built-in tool (Severity: critical, Confidence: 0.85, Fix type: code)
 
 **What we detect:** a LangChain agent (`ReactAgent` / `CreateAgent` / `AgentExecutor`)
 whose resolved tool set includes `PythonREPLTool`, `PythonAstREPLTool`, or
@@ -67,8 +67,11 @@ granted the ability to run anything.
 given a `PythonREPLTool`; a crafted question makes it run `__import__('os').system(...)`
 and read the deployment's secrets.
 
-**Severity high:** the capability is the defect; the fix is to remove the built-in or
-sandbox-and-gate it. **Confidence 0.85:** a few agents legitimately need a REPL and
+**Severity critical:** the capability is the defect — wiring an unsandboxed
+PythonREPL or ShellTool directly to a model-driven agent is arbitrary code
+execution by design; the fix is to remove the built-in or sandbox-and-gate it.
+Rated critical so the deployment-readiness gate's critical-override blocks the
+agent rather than averaging the single fatal tool away across cleaner surfaces. **Confidence 0.85:** a few agents legitimately need a REPL and
 have sandboxed it out of band, which the class-name match cannot see.
 
 ### LC-102 — AgentExecutor has no explicit max_iterations limit (Severity: low, Confidence: 0.6, Fix type: config)
