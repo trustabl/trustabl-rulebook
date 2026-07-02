@@ -34,14 +34,17 @@ references: [LLM06, LLM10]
 
 ## What this policy covers
 
-Agent-scope rules for the constructor-shaped LangChain / LangGraph agents Trustabl
-discovers: `create_react_agent` and `create_agent` (normalized class `ReactAgent` /
-`CreateAgent`) and the legacy `AgentExecutor`. The rules cover the two highest-signal
-agent-level risks: wiring a code-execution/shell built-in tool (LC-101) and a
-tool-calling loop with no explicit iteration cap (LC-102 / LC-111).
+Agent-scope rules for the LangChain / LangGraph agents Trustabl discovers:
+`create_react_agent` and `create_agent` (normalized class `ReactAgent` /
+`CreateAgent`), the legacy `AgentExecutor`, and the raw `StateGraph` graph builder
+(class `StateGraph`). The rules cover the two highest-signal agent-level risks:
+wiring a code-execution/shell built-in tool (LC-101) and a tool-calling loop with
+no explicit iteration cap (LC-102 / LC-111).
 
-The raw `StateGraph` graph agent is a documented discovery gap — its tools and model
-are assembled across many call sites, so it is not yet modeled as a single agent.
+The raw `StateGraph` graph — assembled imperatively across many call sites
+(`StateGraph(...)` → `add_node` → `compile`) — is now discovered as a single agent;
+LC-101 applies to it (`langchain_state_graph`), with the graph's tools resolved from
+its `ToolNode([...])` / `llm.bind_tools([...])` call sites.
 
 ---
 
@@ -103,11 +106,14 @@ timeout, or guarded by a custom loop is over-flagged.
 
 ## What this policy does not cover
 
-The raw `StateGraph` agent (discovery gap), the `Requests*` SSRF built-ins (recorded
-as hosted edges but not yet a dedicated agent rule), v1 `create_agent` middleware
-quality, and whether a code-execution tool is *actually* sandboxed out of band. The
-iteration rules check `AgentExecutor` only — `create_react_agent` / `create_agent`
-enforce their own recursion limit differently and are out of scope here.
+A `StateGraph` whose tools are passed cross-function or cross-module (only same-file
+`ToolNode` / `bind_tools` list literals and same-file `tools = [...]` variables are
+resolved today); the `Requests*` SSRF built-ins (recorded as hosted edges but not yet
+a dedicated agent rule); v1 `create_agent` middleware quality; and whether a
+code-execution tool is *actually* sandboxed out of band. The iteration rules check
+`AgentExecutor` only — `create_react_agent` / `create_agent` / `StateGraph` bound
+their loops via an invoke-site `recursion_limit`, which is not a constructor kwarg
+and so is out of static reach here.
 
 ---
 

@@ -23,6 +23,11 @@ rules:
     confidence: 0.75
     scope: agent
     fix_type: config
+  - id: OAI-107
+    severity: high
+    confidence: 0.85
+    scope: agent
+    fix_type: config
   - id: OAI-109
     severity: high
     confidence: 0.85
@@ -45,9 +50,9 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110  
-**Severities:** high, high, high, medium, high, high, medium  
-**Fix types:** config, config, config, config, config, config, config  
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-107, OAI-105, OAI-109, OAI-110  
+**Severities:** high, high, high, medium, high, high, high, medium  
+**Fix types:** config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
 ---
@@ -60,9 +65,10 @@ mounts. These fire per agent (scope: agent) on the constructor kwargs and the
 resolved tool graph: OAI-101 (no `input_guardrails` while wiring shell/filesystem
 tools), OAI-102 (`tool_use_behavior="stop_on_first_tool"`), OAI-103
 (`tool_choice="required"` + `reset_tool_choice=False`), OAI-104 (raw `Agent`, not
-`SandboxAgent`, with shell/filesystem tools), OAI-109 (`WebSearchTool` without
-`input_guardrails`), OAI-110 (a content-fetching hosted tool without
-`output_guardrails`).
+`SandboxAgent`, with shell/filesystem tools), OAI-107 (a handoff *target* that
+wires shell/filesystem tools, so a delegated turn reaches the shell with no
+guardrail screening it), OAI-109 (`WebSearchTool` without `input_guardrails`),
+OAI-110 (a content-fetching hosted tool without `output_guardrails`).
 
 ---
 
@@ -172,6 +178,49 @@ paths/commands.
 **Confidence 0.75:** the privileged tools might be safe in context, or sandboxed by
 other means — hence the lower confidence and medium severity.
 
+### OAI-107 — Handoff-target agent wires shell/filesystem tools (Severity: high, Confidence: 0.85, Fix type: config)
+
+**What we detect:** an agent that is a resolved handoff target — it appears in
+another agent's `handoffs=[...]` (`agent_is_subagent_of_any`) — and wires a
+shell- or filesystem-touching tool (`agent_uses_tool_kind: [shell_invocation]`,
+which also covers the hosted `ShellTool`/`LocalShellTool`/`CodeInterpreterTool`/
+`ApplyPatchTool` and a decorated tool whose body shells out). The rule does *not*
+require the child's `input_guardrails` to be empty — see below.
+
+**Why it is flaggable:** in the Agents SDK, `input_guardrails` run only on the
+agent that first receives the user input; a handoff target never runs its own
+input guardrails on the handed-off turn. A parent can therefore route around its
+own guardrails by delegating to this child and asking it to run the
+shell-touching tool the parent would have screened. This is the OpenAI analogue
+of ADK-103 (sub-agent granted `BashTool`): delegation crossing a guardrail
+boundary onto a shell-capable child.
+
+**Real-world consequence:** the model hands off to the sub-agent and asks it to
+run a command the parent's `@input_guardrail` would have blocked; the child
+executes it on input no guardrail ever inspected.
+
+**Why high not medium:** it nullifies the parent's primary injection-defense
+surface for any work the model chooses to delegate — a guardrail blind spot that
+is structural to the SDK, not merely an omitted control. It mirrors ADK-103's
+high severity for the same delegation-bypass shape.
+
+**Why not gated on the child's guardrails:** because the child's
+`input_guardrails` do not run on a handoff turn, even a child that declares
+guardrails is exposed. Requiring an empty `input_guardrails` would miss exactly
+the cases that *look* defended but are not — so the shell exposure on a handoff
+target is the hazard regardless.
+
+**Fix type — config:** remove the shell/filesystem tools from the handoff target,
+or move them up to the top-level agent that receives user input (where its
+guardrails run); if the handoff must stay, screen the handoff payload (an
+`@input_guardrail` on the parent plus an `input_filter` on the handoff).
+
+**Confidence 0.85:** the handoff edge and the tool grant are read directly from
+the resolved graph (only *resolved* handoffs match, so the relationship is real);
+a notch below ADK-103's 0.9 because the shell signal includes the heuristic
+`shells_out` fact on decorated tools and the broader hosted-class set, slightly
+wider than ADK's single explicit `BashTool`.
+
 ### OAI-105 — TypeScript agent wires a content-fetching hosted tool without inputGuardrails (Severity: high, Confidence: 0.8, Fix type: config)
 
 **What we detect:**
@@ -268,12 +317,18 @@ often acceptable — a review prompt more than a defect.
 
 - The *quality* of guardrails that are present — a no-op `input_guardrail` /
   `output_guardrail` satisfies OAI-101/106/109/110 without screening anything.
-- Shell/filesystem capability delivered via a `@function_tool` (a `KindOpenAITool`)
-  or hosted shell tool rather than a bare shell-invoking function — OAI-101/104's
-  `agent_uses_tool_kind: [shell_invocation]` matches only the bare-function shape, a
-  known coverage gap.
-- Handoff targets: an agent that hands off to a less-guarded sub-agent (a graph-level
-  concern this per-agent rule does not traverse).
+- Pure *filesystem-touching* capability that is not shell reach — a `@function_tool`
+  that calls `open()` / `pathlib` without shelling out. OAI-101/104/107's
+  `agent_uses_tool_kind: [shell_invocation]` keys on shell reach (a bare
+  shell-invoking function, a hosted shell tool, or a decorated tool whose body
+  shells out), not on plain filesystem access, so the "filesystem-touching" half of
+  those rule titles is only partially covered.
+- Handoff *guardrail downgrades beyond shell reach*: OAI-107 flags a handoff target
+  that wires shell/filesystem tools, but it does not compare guardrail coverage
+  between parent and child. A handoff to a sub-agent that is less-guarded for reasons
+  other than shell capability (e.g. fewer `output_guardrails`, a weaker model) is not
+  flagged — that broader graph-level comparison is out of scope for this per-agent
+  rule.
 - Guardrails or sandboxing applied by a wrapper/factory the static check cannot see.
 - For OAI-105: a TypeScript agent whose options object (and therefore its hosted-tool
   list) is opaque to the static read fires nothing — the rule requires a *resolved*
