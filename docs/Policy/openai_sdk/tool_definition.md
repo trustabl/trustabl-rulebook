@@ -23,6 +23,11 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: OAI-025
+    severity: low
+    confidence: 0.5
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM06]
 
 **Policy ID:** `openai_sdk_tool_definition`  
 **File:** `openai_sdk/tool_definition.yaml`  
-**Rules:** OAI-001, OAI-002, OAI-007, OAI-022  
-**Severities:** low, medium, low, low  
-**Fix types:** code, code, code, code  
+**Rules:** OAI-001, OAI-002, OAI-007, OAI-022, OAI-025  
+**Severities:** low, medium, low, low, low  
+**Fix types:** code, code, code, code, code  
 **References:** LLM06
 
 > **Read [claude_sdk/tool_definition.md](../claude_sdk/tool_definition.md) for the full threat model.**
@@ -46,7 +51,10 @@ OpenAI Agents SDK `@function_tool`-decorated functions whose model-facing
 interface is underspecified: OAI-001 fires on a missing docstring
 (`has_docstring: false`), OAI-002 on no type-annotated parameters
 (`has_typed_params: false`), OAI-007 on a vague name (`name_in`). Same predicates
-and same routing rationale as the Claude tool-definition policy.
+and same routing rationale as the Claude tool-definition policy. OAI-025 is the
+odd one out: it flags a tool that is *dead* — defined but referenced nowhere in
+the repo — using the engine's call-graph liveness signal rather than the tool's
+model-facing interface.
 
 ---
 
@@ -127,6 +135,52 @@ Matches the Python sibling's 0.85. The firing is mechanically exact, but a
 `description` assembled at runtime from a non-literal expression is real text the
 model sees yet captured as empty here — the false-positive case the literal-only
 capture cannot rule out, which the YAML explanation calls out explicitly.
+
+### OAI-025 — Tool is defined but never referenced anywhere in the repo (Severity: low, Confidence: 0.5, Fix type: code)
+
+**What we detect:**
+A Python `@function_tool` whose call-graph liveness state is `unreachable`
+(`reachability_is: [unreachable]`, schema v13). The engine builds an intra-repo
+Python call graph (name-based, cross-file) after discovery and stamps each
+Python tool's `Reachability`. `unreachable` is asserted only when the tool's
+name appears **nowhere** in the repo outside its own definition — not in any
+`Agent(tools=[...])` list, not in a handoff, not at any call site. A tool passed
+anywhere as a value is `unknown`, and a tool with no signal at all (TypeScript,
+or no call graph built) matches nothing — the rule structurally cannot fire on
+code the analysis did not classify.
+
+**Why it is flaggable:**
+A decorated-but-unwired tool is dead capability code. It is not exposed to any
+model today, but it carries tool-grade capability (network, filesystem, whatever
+its body does) and sits outside the reviewed agent surface — one refactor that
+appends it to a `tools=[...]` list ships it to the model with whatever drift it
+accumulated while dead. Dead definitions also misdirect audit effort: reviewers
+harden code no agent can call while believing coverage is complete.
+
+**Real-world consequence:**
+A repo migrates its email tool to a new implementation but leaves the old
+`@function_tool send_email_v1` in place. Months later a refactor wires the stale
+v1 (no allowlist, no rate limit) back into an agent. The capability was never
+re-reviewed because it "was always there."
+
+**Why severity is low and not medium:**
+The tool is, by definition, not reachable by any model today — there is no
+present-tense exploit path. The finding is preventive hygiene (attack-surface
+minimization and drift control), not an active exposure.
+
+**Fix type — code:**
+Delete the definition or wire it into the intended agent deliberately; both are
+tool-source edits.
+
+**Confidence 0.5:**
+Deliberately the lowest in the pack — this is the first rule gated on the
+call-graph analysis. The liveness pass is name-based: dynamic dispatch through
+`getattr`, string-keyed registries, or re-exports via `__all__` manipulation
+reference a tool without its identifier appearing, so a live tool can be
+misclassified as dead. The conservative design (any name occurrence ⇒ not
+unreachable) bounds the false-positive surface to string-only dispatch patterns,
+but until the analysis earns corpus history beyond the current zero-false-fire
+sweep, 0.5 states that uncertainty honestly. Raise only with evidence.
 
 ---
 
