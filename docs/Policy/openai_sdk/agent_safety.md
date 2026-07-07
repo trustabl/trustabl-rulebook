@@ -43,6 +43,16 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
+  - id: OAI-112
+    severity: high
+    confidence: 0.6
+    scope: agent
+    fix_type: config
+  - id: OAI-113
+    severity: medium
+    confidence: 0.6
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06]
 ---
 
@@ -50,7 +60,7 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-107, OAI-105, OAI-109, OAI-110  
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-107, OAI-105, OAI-109, OAI-110, OAI-112, OAI-113  
 **Severities:** high, high, high, medium, high, high, high, medium  
 **Fix types:** config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
@@ -312,6 +322,93 @@ are low-risk (public data, no sensitive egress), so the missing output guardrail
 often acceptable — a review prompt more than a defect.
 
 ---
+
+### OAI-112 — Guarded agent transitively wields shell through its handoff chain (Severity: high, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+An agent that declares `input_guardrails` AND whose composition closure
+includes `shell` while its own tools provide none
+(`transitive_capability_exceeds_direct: [shell]`, schema v14). The closure is
+the engine's multi-agent composition analysis: the union of capability tokens
+over the agent's own tools plus every agent reachable through *resolved*
+handoff edges (`analysis.ComputeComposition`). An agent with an empty closure
+— unanalyzed, or wielding nothing — structurally cannot fire.
+
+**Why it is flaggable:**
+`input_guardrails` run only on the agent that first receives user input; a
+handoff target never runs its own on the delegated turn (the same SDK
+semantics OAI-107 defends, seen from the parent's side). Declaring guardrails
+here while the shell-executing turn happens downstream creates false
+confidence: the dangerous turn runs on a payload the handoff may have
+transformed, with no guardrail in front of it.
+
+**Real-world consequence:**
+A support triage agent guards its input, then hands "technical problems" to an
+escalation agent that runs a diagnostics binary via `subprocess`. A crafted
+ticket phrase steers the triage model into the handoff; the injected host
+argument reaches the shell tool without any guardrail having seen the payload
+in its delegated form.
+
+**Why severity is high:**
+Same delegated-shell exposure class as OAI-107 (high). The finding fires on
+the agent where the trust decision lives — the guarded entry point whose
+authors believe input is screened.
+
+**Fix type — config:**
+Move the shell work up to the guarded agent, strip the downstream shell tools,
+or constrain the handoff (`input_filter`) — wiring changes, not tool-body
+rewrites.
+
+**Confidence 0.6:**
+Deliberately below OAI-107's 0.85: the closure inherits every conservatism of
+edge resolution (external and ambiguous edges stop the walk — under-reporting,
+never over-reporting) but also its blind spots, and the capability derivation
+is fact-based (a shell reached through a wrapper the facts miss will not
+fire; a tool whose subprocess use is defensive still counts as shell). On the
+corpus orchestrator examples the rule fires exactly once, on the seeded
+guarded-triage → shell-escalation chain, with zero fires elsewhere. Raise
+with corpus evidence.
+
+### OAI-113 — Unguarded agent's handoff chain reaches shell execution (Severity: medium, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+The complement of OAI-112: an agent with NO `input_guardrails` whose closure
+includes `shell` that its own tools do not provide. The two rules partition
+the transitive-shell space by guardrail presence, so an agent never fires
+both.
+
+**Why it is flaggable:**
+If this agent is where user input enters, nothing screens that input anywhere
+on a delegation path that ends in shell execution — guardrails do not exist at
+the entry, and handoff targets never run their own on delegated turns. Each
+agent looks harmless in isolation; the exposure only appears at the chain
+level, which is exactly what per-agent review misses.
+
+**Real-world consequence:**
+A front-desk agent forwards incident text to a dispatcher, which hands off to
+a remediation agent that shells out. No guardrail exists anywhere on the
+path, so prompt-injected incident text can steer the chain into arbitrary
+command construction three agents away from where it entered.
+
+**Why severity is medium and not high:**
+The downstream agent's own shell wiring already fires the direct rules
+(OAI-101/104/107) at their severities; this finding adds the chain-level
+view on an agent that holds no dangerous tools itself. Attribution is one
+step removed from the capability, so it ranks below the direct findings it
+complements.
+
+**Fix type — config:**
+Add `input_guardrails` at this entry point and reconsider the downstream
+shell grant — wiring changes.
+
+**Confidence 0.6:**
+Same closure-inheritance argument as OAI-112. Additionally, an agent that is
+itself only ever a handoff *target* (never an entry point) still fires when
+unguarded with transitive shell — defensible, since its guardrails would not
+run on delegated turns anyway, but it is attribution noise the static scan
+cannot fully resolve without entrypoint (Runner.run) discovery. Zero fires
+across the corpus today (the seeded unguarded chains reach filesystem, not
+shell). Raise with corpus evidence.
 
 ## What this policy does not cover
 
