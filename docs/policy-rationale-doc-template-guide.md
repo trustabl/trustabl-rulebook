@@ -47,7 +47,7 @@ rule is documented in the wrong `category`/`topic` or no longer exists
 
 > **`hint_ids` is optional and shape-checked only.** Each entry must match
 > `HINT-NNNN`. The `trustabl-hints` repo is not checked out here, so the gate
-> cannot confirm the ids actually exist there — only that they are
+> cannot confirm the ids actually exist there, only that they are
 > well-formed. Add it whenever a rule's origin is a recorded exploit pattern
 > in that repo.
 
