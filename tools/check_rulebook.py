@@ -29,6 +29,7 @@ docs/policy-rationale-doc-template-guide.md):
         confidence: 0.6
         scope: tool
         fix_type: code          # editorial: config | code (not yet in engine schema)
+        hint_ids: [HINT-0006]    # optional: trustabl-hints entries this rule came from
     references: [LLM06, LLM02]   # OWASP LLM Top 10:2025
     ---
 
@@ -47,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +60,7 @@ except ImportError:
 
 CONFIDENCE_TOLERANCE = 1e-9
 VALID_FIX_TYPES = {"config", "code"}
+HINT_ID_RE = re.compile(r"^HINT-\d{4}$")
 
 
 @dataclass
@@ -83,6 +86,10 @@ class DocRule:
     confidence: float | None
     scope: str | None
     fix_type: str | None
+    # Raw front-matter value for `hint_ids` (not yet shape-validated). Kept
+    # raw rather than coerced so check() can distinguish "absent" from
+    # "present but malformed" (e.g. a bare string instead of a list).
+    hint_ids_raw: object = None
 
 
 @dataclass
@@ -189,6 +196,7 @@ def load_docs(rulebook_repo: Path) -> list[RationaleDoc]:
                     confidence=(float(conf) if conf is not None else None),
                     scope=(str(r["scope"]) if "scope" in r else None),
                     fix_type=(str(r["fix_type"]) if "fix_type" in r else None),
+                    hint_ids_raw=r.get("hint_ids"),
                 )
             )
         docs.append(
@@ -268,6 +276,20 @@ def check(
                 errors.append(
                     f"{rel}: {rid} fix_type {dr.fix_type!r} not in {sorted(VALID_FIX_TYPES)}"
                 )
+
+            # hint_ids shape validation (optional; the trustabl-hints repo is
+            # not checked out here, so existence is not cross-checked).
+            if dr.hint_ids_raw is not None:
+                if not isinstance(dr.hint_ids_raw, list):
+                    errors.append(
+                        f"{rel}: {rid} hint_ids must be a list of HINT-NNNN strings"
+                    )
+                else:
+                    for entry in dr.hint_ids_raw:
+                        if not (isinstance(entry, str) and HINT_ID_RE.match(entry)):
+                            errors.append(
+                                f"{rel}: {rid} hint_ids entry {entry!r} is not a HINT-NNNN id"
+                            )
 
     # COVERAGE — every shipped rule must be documented.
     for rid in sorted(rules):

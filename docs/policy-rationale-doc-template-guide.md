@@ -29,6 +29,7 @@ rules:                            # one entry per rule in the policy file
     confidence: 0.6              # MUST match the rule's YAML confidence
     scope: tool                  # MUST match the rule's YAML scope (required; one of tool|agent|subagent|repo)
     fix_type: code               # editorial: config | code (see note below)
+    hint_ids: [HINT-0006]        # optional: trustabl-hints entries this rule was synthesized from
 references: [LLM06, LLM02]        # OWASP LLM Top 10:2025 IDs
 ---
 ```
@@ -43,6 +44,12 @@ rule is documented in the wrong `category`/`topic` or no longer exists
 > *shape* (fix_type ∈ {config, code}) but cannot cross-check them against the
 > pack. Do not claim in prose that the engine prioritizes config fixes in scan
 > output until that field actually lands in the schema.
+
+> **`hint_ids` is optional and shape-checked only.** Each entry must match
+> `HINT-NNNN`. The `trustabl-hints` repo is not checked out here, so the gate
+> cannot confirm the ids actually exist there — only that they are
+> well-formed. Add it whenever a rule's origin is a recorded exploit pattern
+> in that repo.
 
 ---
 
@@ -164,6 +171,11 @@ audit", "use is_relative_to() not string prefix matching").
     parameters. No tool source code needs to change. These findings appear first in
     scan output.
   - `code` — fix requires modifying tool or agent source code.
+- `hint_ids` (optional): the `trustabl-hints` entries this rule was
+  synthesized from, e.g. `hint_ids: [HINT-0006]`. Shape-checked by the gate
+  (each must be `HINT-NNNN`); the hints repo is not checked out here, so
+  existence is not cross-checked. Link whenever a rule's origin is a recorded
+  exploit pattern.
 
 ### "What this policy covers" — do not skip
 
