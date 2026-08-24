@@ -261,6 +261,28 @@ def check(
             if not any(h.startswith(section) for h in headings):
                 errors.append(f"{rel}: missing required section \"## {section}\"")
 
+        # STRUCTURE — the rendered "**Rules:**" line. Docs restate their rule
+        # list in the header block a reader sees; front-matter is the copy the
+        # gate has always read. Only this field is checked: the neighbouring
+        # Severities / Fix types / References lines are deliberately prose
+        # ("config (SKILL.md edits) + code ...") and do not parse as a list.
+        rules_line = re.search(r"^\*\*Rules:\*\*\s*(.+?)\s*$", doc.body, re.MULTILINE)
+        if rules_line:
+            listed = [x for x in re.split(r"[,\s]+", rules_line.group(1)) if x]
+            declared = [dr.rule_id for dr in doc.rules]
+            if sorted(listed) != sorted(declared):
+                missing = sorted(set(declared) - set(listed))
+                extra = sorted(set(listed) - set(declared))
+                detail = []
+                if missing:
+                    detail.append(f"missing {', '.join(missing)}")
+                if extra:
+                    detail.append(f"lists unknown {', '.join(extra)}")
+                errors.append(
+                    f"{rel}: the **Rules:** header disagrees with front-matter "
+                    f"({'; '.join(detail) or 'order/duplicates differ'})"
+                )
+
         for dr in doc.rules:
             rid = dr.rule_id
             spec = rules.get(rid)
