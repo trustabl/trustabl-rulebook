@@ -8,7 +8,10 @@
 # default; tectonic is the easiest to install for CI — override with
 # `make book PDF_ENGINE=tectonic`).
 
-RULES_REPO ?= ../trustabl-rules
+# $TRUSTABL_RULES_REPO is the documented way to point the tools at a pack that
+# is not a sibling checkout. Make passes --rules-repo explicitly, so without
+# this the variable is silently ignored for every target.
+RULES_REPO ?= $(or $(TRUSTABL_RULES_REPO),../trustabl-rules)
 PDF_ENGINE ?= xelatex
 BUILD_DIR  := build
 BOOK_MD    := $(BUILD_DIR)/trustabl-rulebook.md
