@@ -166,8 +166,12 @@ def render_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
-def rule_row(n: int, r: RuleSpec, source_label: str) -> list[str]:
+def rule_row(n: int, r: RuleSpec, source_label: str, doc_prefix: str = "") -> list[str]:
+    """One index row. doc_prefix walks up to the repo root from the index's own
+    location, so the rationale link resolves from both the master index and a
+    per-SDK one."""
     src = f"[{source_label}]({GH_BASE}{r.source})"
+    doc = f"[{r.topic}.md]({doc_prefix}docs/Policy/{r.category}/{r.topic}.md)"
     return [
         str(n),
         r.rule_id,
@@ -179,10 +183,11 @@ def rule_row(n: int, r: RuleSpec, source_label: str) -> list[str]:
         f"{r.confidence:.2f}",
         risk_score(r.severity, r.confidence),
         src,
+        doc,
     ]
 
 
-HEADERS = ["", "Id", "SDK/ADK", "Scope", "Applies To", "Policy", "Severity", "Confidence", "Risk", "Source"]
+HEADERS = ["", "Id", "SDK/ADK", "Scope", "Applies To", "Policy", "Severity", "Confidence", "Risk", "Source", "Rationale"]
 
 
 def scope_breakdown(rules: list[RuleSpec]) -> dict[str, int]:
@@ -235,7 +240,7 @@ def build_per_sdk(cat: str, rules: list[RuleSpec]) -> str:
     b = scope_breakdown(cr)
     parts = [f"{b[s]} {s}" for s in SCOPE_ORDER if b[s]]
     breakdown = " · ".join(parts)
-    rows = [rule_row(i + 1, r, f"{r.topic}.yaml") for i, r in enumerate(cr)]
+    rows = [rule_row(i + 1, r, f"{r.topic}.yaml", doc_prefix="../") for i, r in enumerate(cr)]
     table = render_table(HEADERS, rows)
     return (
         f"{GENERATED_MARKER}\n"
