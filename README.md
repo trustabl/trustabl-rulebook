@@ -1,5 +1,7 @@
 # trustabl-rulebook
 
+[![rulebook](https://github.com/trustabl/trustabl-rulebook/actions/workflows/rulebook.yml/badge.svg)](https://github.com/trustabl/trustabl-rulebook/actions/workflows/rulebook.yml)
+
 Index and rationale docs for the [trustabl](https://github.com/trustabl/agent-reliability-analyzer)
 static analyzer's policy ruleset. Canonical YAML rules live in
 [trustabl/agent-reliability-rules](https://github.com/trustabl/agent-reliability-rules) — this
