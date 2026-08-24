@@ -45,6 +45,15 @@ not just the one request; confidence 0.85 because the missing-kwarg match is a
 structured AST check, with the residual gap being client aliases reached across
 function or module boundaries (resolved only within a single function today).
 
+**Real-world consequence:** a server exposes `fetch_report(report_id)`, which
+calls `requests.get(...)` against an internal reports service with no `timeout=`.
+The service wedges — not down, just never answering — and the handler blocks
+forever. The worker serving that session is now unavailable, so every later tool
+call from that client queues behind a request nobody is waiting for. With a
+handful of sessions in the same state the server stops answering entirely. The
+upstream never returned an error, so nothing logs a failure and the server looks
+healthy while serving nothing.
+
 **Fix type — code:** adding `timeout=` is a source edit to the handler.
 
 ---
