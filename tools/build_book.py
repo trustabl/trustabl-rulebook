@@ -36,7 +36,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from check_rulebook import load_rules
-from gen_index import SDK_FULL, SDK_LABEL, SDK_ORDER, numeric_id, risk_score
+from gen_index import (SDK_FULL, SDK_LABEL, SDK_ORDER, escape_cell, numeric_id,
+                       risk_score)
 
 FRONT_MATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 # A markdown link whose target points at a rulebook .md file -> keep only the text.
@@ -75,8 +76,9 @@ def appendix_table(rules) -> str:
     )
     headers = ["Id", "SDK", "Scope", "Sev", "Conf", "Risk", "Policy"]
     rows = [
-        [r.rule_id, SDK_LABEL.get(r.category, r.category), r.scope, r.severity,
-         f"{r.confidence:.2f}", risk_score(r.severity, r.confidence), r.title]
+        [escape_cell(c) for c in
+         [r.rule_id, SDK_LABEL.get(r.category, r.category), r.scope, r.severity,
+          f"{r.confidence:.2f}", risk_score(r.severity, r.confidence), r.title]]
         for r in ordered
     ]
     widths = [len(h) for h in headers]
