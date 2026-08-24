@@ -45,6 +45,35 @@ are assembled across many call sites, so it is not yet modeled as a single agent
 
 ---
 
+## Why agent safety is a distinct concern in LangChain
+
+An agent's entire capability surface is a list literal handed to a constructor.
+`create_react_agent(model, [PythonREPLTool()])` grants arbitrary code execution
+in one positional argument, with no keyword naming the risk, no
+`allow_dangerous_*` flag to type, and nothing at the call site that reads
+differently from wiring a calculator. The security boundary and an ordinary
+argument list are the same object, which is why these rules attach to the
+**agent** rather than to a tool: the defect is not what any single tool does, it
+is what the assembled set adds up to.
+
+That surface is also assembled through several shapes — `create_react_agent`,
+`create_agent`, and the legacy `AgentExecutor` — that differ in how they bound a
+run. `AgentExecutor` takes `max_iterations`; the graph-based constructors
+enforce a recursion limit of their own instead. So "is this agent bounded?" has
+no single answer in this ecosystem, and a reviewer who has internalized one
+constructor's answer will read the other as safe. LC-102 and LC-111 deliberately
+scope to `AgentExecutor` for that reason, and the gap is named below rather than
+papered over.
+
+The two risks are also unusually asymmetric for one policy file. LC-101 is a
+capability that cannot be tuned — a REPL on the tool surface is either there or
+not — while the iteration rules flag a missing *explicit* bound behind a
+framework default that already prevents a true runaway. High and low severity
+sit together here not by inconsistency but because a code-execution grant and an
+unsized loop fail in different orders of magnitude.
+
+---
+
 ## Rule-by-rule defense
 
 ### LC-101 — Agent wires a code-execution or shell built-in tool (Severity: high, Confidence: 0.85, Fix type: code)
