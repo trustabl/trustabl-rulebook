@@ -63,7 +63,7 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
-  - id: MCP-023
+  - id: MCP-029
     severity: medium
     confidence: 0.85
     scope: tool
@@ -75,7 +75,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022, MCP-023  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022, MCP-029  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -96,7 +96,7 @@ predicate `mcp_tool` kind) and the TypeScript `@modelcontextprotocol/sdk`
 community php-mcp/server) `#[McpTool]`-attributed methods. MCP-001/002/003 are
 the Python rules; MCP-011 is the TypeScript description rule; MCP-015/016 are the
 Go rules; MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules;
-MCP-019 (no description), MCP-020 (ambiguous name), and MCP-023 (untyped
+MCP-019 (no description), MCP-020 (ambiguous name), and MCP-029 (untyped
 parameters) are the PHP rules; MCP-021 (no description) and MCP-022 (ambiguous
 name) are the Rust rules (official rmcp crate, `#[tool]`-attributed methods).
 
@@ -254,7 +254,7 @@ ambiguous name gives the model no intent signal and collides across servers in a
 shared session, and the cost is paid by every uncontrolled consumer of the
 published catalog.
 
-### MCP-023 — PHP MCP tool has no type-annotated parameters (Severity: medium, Confidence: 0.85, Fix type: code)
+### MCP-029 — PHP MCP tool has no type-annotated parameters (Severity: medium, Confidence: 0.85, Fix type: code)
 
 **What we detect:** a `#[McpTool]`-attributed PHP method that has parameters but
 no type hints (`has_params: true` and `has_typed_params: false`). Discovery sets
@@ -306,7 +306,7 @@ plus the Semantic Kernel `[KernelFunction]` / AutoGen `[Function]` shapes await
 later work. For PHP, the multi-line `#[...]` attribute form is not read (the
 grammar parses single-line attributes as comments), `#[McpResource]` /
 `#[McpPrompt]` are not discovered, and body-fact rules await PHP AST predicates.
-MCP-023 now covers the untyped-params analog of MCP-002; it still cannot see
+MCP-029 now covers the untyped-params analog of MCP-002; it still cannot see
 mixed-hint signatures (one typed parameter silences the rule) or a schema
 published outside the method signature. For Rust,
 untyped-params has no analog (Rust is statically typed, and the input schema lives
