@@ -6,7 +6,7 @@ rulebook's per-policy rationale docs. This is the rulebook analog of the
 engine's `TestPolicyRules_AllRulesCovered` guard: it fails CI when the book
 drifts from the rules users actually receive.
 
-It enforces three things:
+It enforces four things:
 
   1. COVERAGE   — every rule in trustabl-rules has a rationale doc covering it.
   2. CONSISTENCY — each doc's front-matter (severity / confidence / scope) matches
@@ -15,6 +15,9 @@ It enforces three things:
   3. PLACEMENT  — a rule is documented in the chapter (category/topic) where it
                    actually lives, and docs do not reference rules that no longer
                    exist.
+  4. STRUCTURE  — every doc carries the sections the template guide requires. A
+                   doc that stops before "Recommendations beyond the fix" tells a
+                   reader what is wrong but not what to do instead.
 
 Front-matter shape expected on each `docs/Policy/<category>/<topic>.md` (see
 docs/policy-rationale-doc-template-guide.md):
@@ -59,6 +62,18 @@ except ImportError:
     sys.exit("error: pyyaml is required (pip install pyyaml)")
 
 CONFIDENCE_TOLERANCE = 1e-9
+
+# Level-2 headings every rationale doc must carry. The template guide
+# (docs/policy-rationale-doc-template-guide.md) says "Fill every section. Delete
+# no sections."; this is that instruction made checkable. Prose headings that
+# vary per doc — the "Why <topic> is a distinct concern" section — are not
+# listed, because their wording is deliberately per-topic.
+REQUIRED_SECTIONS = [
+    "What this policy covers",
+    "Rule-by-rule defense",
+    "What this policy does not cover",
+    "Recommendations beyond the fix",
+]
 VALID_FIX_TYPES = {"config", "code"}
 HINT_ID_RE = re.compile(r"^HINT-\d{4}$")
 
@@ -96,6 +111,7 @@ class DocRule:
 class RationaleDoc:
     path: Path
     has_front_matter: bool
+    body: str = ""
     policy_id: str | None = None
     category: str | None = None
     topic: str | None = None
@@ -182,7 +198,7 @@ def load_docs(rulebook_repo: Path) -> list[RationaleDoc]:
         text = md_path.read_text(encoding="utf-8")
         fm = parse_front_matter(text)
         if fm is None:
-            docs.append(RationaleDoc(path=md_path, has_front_matter=False))
+            docs.append(RationaleDoc(path=md_path, has_front_matter=False, body=text))
             continue
         doc_rules = []
         for r in fm.get("rules") or []:
@@ -203,6 +219,7 @@ def load_docs(rulebook_repo: Path) -> list[RationaleDoc]:
             RationaleDoc(
                 path=md_path,
                 has_front_matter=True,
+                body=text,
                 policy_id=fm.get("policy_id"),
                 category=fm.get("category"),
                 topic=fm.get("topic"),
@@ -233,6 +250,38 @@ def check(
             msg = f"{rel}: no YAML front-matter (cannot be machine-checked)"
             (errors if strict else warnings).append(msg)
             continue
+
+        # STRUCTURE
+        # Prefix match, not equality: a doc may qualify a heading it still
+        # carries — claude_skill/skill_safety.md uses "## What this policy does
+        # not cover (v1)" — and that is an editorial note, not a missing
+        # section.
+        headings = re.findall(r"^##\s+(.+?)\s*$", doc.body, re.MULTILINE)
+        for section in REQUIRED_SECTIONS:
+            if not any(h.startswith(section) for h in headings):
+                errors.append(f"{rel}: missing required section \"## {section}\"")
+
+        # STRUCTURE — the rendered "**Rules:**" line. Docs restate their rule
+        # list in the header block a reader sees; front-matter is the copy the
+        # gate has always read. Only this field is checked: the neighbouring
+        # Severities / Fix types / References lines are deliberately prose
+        # ("config (SKILL.md edits) + code ...") and do not parse as a list.
+        rules_line = re.search(r"^\*\*Rules:\*\*\s*(.+?)\s*$", doc.body, re.MULTILINE)
+        if rules_line:
+            listed = [x for x in re.split(r"[,\s]+", rules_line.group(1)) if x]
+            declared = [dr.rule_id for dr in doc.rules]
+            if sorted(listed) != sorted(declared):
+                missing = sorted(set(declared) - set(listed))
+                extra = sorted(set(listed) - set(declared))
+                detail = []
+                if missing:
+                    detail.append(f"missing {', '.join(missing)}")
+                if extra:
+                    detail.append(f"lists unknown {', '.join(extra)}")
+                errors.append(
+                    f"{rel}: the **Rules:** header disagrees with front-matter "
+                    f"({'; '.join(detail) or 'order/duplicates differ'})"
+                )
 
         for dr in doc.rules:
             rid = dr.rule_id
