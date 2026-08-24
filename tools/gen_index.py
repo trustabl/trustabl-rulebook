@@ -119,8 +119,19 @@ def risk_score(severity: str, confidence: float) -> str:
     return f"{val}"
 
 
+def escape_cell(value: str) -> str:
+    """Escape a pipe so a cell cannot break out into an extra column.
+
+    Rule titles and applies_to values are free text authored in another repo;
+    an unescaped `|` in one silently corrupts the published table row.
+    """
+    return value.replace("|", "\\|")
+
+
 def render_table(headers: list[str], rows: list[list[str]]) -> str:
     """Render a GitHub markdown table with per-column padding (deterministic)."""
+    headers = [escape_cell(h) for h in headers]
+    rows = [[escape_cell(c) for c in row] for row in rows]
     widths = [len(h) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):
