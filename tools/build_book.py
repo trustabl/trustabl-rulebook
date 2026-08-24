@@ -118,8 +118,16 @@ def build(repo: Path, rules_repo: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Assemble the rulebook into one markdown for Pandoc.")
-    ap.add_argument("--rules-repo", default="../trustabl-rules")
-    ap.add_argument("--out", default="build/trustabl-rulebook.md")
+    ap.add_argument(
+        "--rules-repo",
+        default="../trustabl-rules",
+        help="path to the trustabl-rules checkout (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--out",
+        default="build/trustabl-rulebook.md",
+        help="where to write the assembled markdown (default: %(default)s)",
+    )
     args = ap.parse_args()
 
     repo = Path(__file__).resolve().parent.parent

@@ -219,7 +219,12 @@ def build_per_sdk(cat: str, rules: list[RuleSpec]) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate rulebook POLICY_INDEX files.")
     default_rules = os.environ.get("TRUSTABL_RULES_REPO", "../trustabl-rules")
-    ap.add_argument("--rules-repo", default=default_rules)
+    ap.add_argument(
+        "--rules-repo",
+        default=default_rules,
+        help="path to the trustabl-rules checkout "
+             "(default: %(default)s, or $TRUSTABL_RULES_REPO)",
+    )
     ap.add_argument("--check", action="store_true", help="fail if regeneration would change a file")
     args = ap.parse_args()
 
