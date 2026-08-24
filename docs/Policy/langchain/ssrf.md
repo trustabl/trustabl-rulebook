@@ -25,7 +25,7 @@ references: [LLM06, LLM02]
 **Fix types:** code
 **References:** LLM06 (Excessive Agency), LLM02 (Sensitive Information Disclosure)
 
-> **Read [openai_sdk/ssrf.md](../openai_sdk/ssrf.md) for the full threat model.**
+> **Read [claude_sdk/ssrf.md](../claude_sdk/ssrf.md) for the full threat model.**
 > This document covers the LangChain-specific differences only.
 
 ---
@@ -43,7 +43,7 @@ a plain string literal. TypeScript (LC-013) reads the `dynamic_url` fact, set wh
 ## Why a model-controlled URL is server-side request forgery
 
 The mechanism and the metadata-endpoint / internal-service impact are covered in
-[openai_sdk/ssrf.md](../openai_sdk/ssrf.md). The LangChain-specific note: this
+[claude_sdk/ssrf.md](../claude_sdk/ssrf.md). The LangChain-specific note: this
 ecosystem ships a `RequestsToolkit` and a `Requests*` tool family whose docstrings
 explicitly require `allow_dangerous_requests=True` precisely because they hand the
 model an arbitrary-URL fetch. A hand-rolled `requests.get(url)` inside a `@tool`
@@ -96,4 +96,4 @@ Validate the URL against a host allow-list, reject private and link-local ranges
 (and redirects into them), and never pass a raw model-supplied URL to the HTTP
 client. If the tool talks to one service, hard-code the base URL and accept only a
 path/query from the model. The full safe pattern is in
-[openai_sdk/ssrf.md](../openai_sdk/ssrf.md#recommendations-beyond-the-fix).
+[claude_sdk/ssrf.md](../claude_sdk/ssrf.md#recommendations-beyond-the-fix).

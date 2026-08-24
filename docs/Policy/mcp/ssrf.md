@@ -23,7 +23,7 @@ references: [LLM06, LLM02]
 **Rules:** MCP-008, MCP-013  
 **References:** LLM06 (Excessive Agency), LLM02 (Sensitive Information Disclosure)
 
-> Shares the SSRF threat model with [openai_sdk/ssrf.md](../openai_sdk/ssrf.md).
+> Shares the SSRF threat model with [claude_sdk/ssrf.md](../claude_sdk/ssrf.md).
 > MCP-specific angle only.
 
 ---
