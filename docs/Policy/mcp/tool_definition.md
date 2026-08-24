@@ -275,3 +275,79 @@ untyped-params has no analog (Rust is statically typed, and the input schema liv
 in a separate `#[derive(JsonSchema)]` struct passed via `Parameters<T>`, which is
 not yet resolved); raw-string descriptions, `#[tool]` on free functions outside an
 `impl`, the `#[prompt]` / resource shapes, and body-fact rules await later work.
+
+---
+
+## Recommendations beyond the fix
+
+```python
+from typing import Literal
+
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("billing")
+
+
+@mcp.tool()
+def find_invoices_by_customer(
+    customer_id: str,
+    status: Literal["draft", "open", "paid", "void"] = "open",
+    limit: int = 20,
+) -> dict:
+    """Search invoices for one customer, newest first.
+
+    Read-only. Use this to answer questions about a customer's billing history;
+    use `create_invoice` to issue a new one. Returns at most `limit` invoices,
+    or an empty list when the customer has none matching `status`.
+    """
+    ...
+```
+
+Three things carry across the boundary here, and all three are published to
+every connecting client: the name says what the tool does to what noun, the
+annotations become the input schema, and the docstring says when to reach for
+this tool rather than a neighboring one.
+
+The definition-hygiene rationale is in
+[openai_sdk/tool_definition.md](../openai_sdk/tool_definition.md#recommendations-beyond-the-fix).
+MCP-specific additions:
+
+1. Write the description for a model that cannot see your server. An in-process
+   SDK tool is chosen from a catalog its author assembled; an MCP tool is chosen
+   from a merged catalog assembled by whoever connected, alongside tools this
+   author has never seen. Say what the tool does, whether it mutates anything,
+   and what the *neighboring* choice is — that last part is what a merged
+   catalog destroys and what no schema can encode.
+2. Name the object, not just the verb. These rules match a fixed list —
+   `process`, `handle`, `run`, `do`, `execute`, `perform`, `work`, `thing`,
+   `stuff`, plus `go` on the Python rule only — which is a floor, not a
+   standard. `search` and `update` pass every one of them and collide just as
+   badly across servers in one session; `find_invoices_by_customer` cannot.
+3. Constrain enumerable parameters in the type, not in the prose. `Literal[...]`
+   becomes an enum in the published schema, so a connecting client can reject a
+   bad value before it reaches your handler — where "status must be one of ..."
+   in a docstring is advice a model may or may not take.
+4. Say it in the language the SDK actually reads. The rules check the mechanism
+   each SDK publishes from, so the fix differs by language even though the
+   finding does not:
+
+   | SDK | Where the description comes from |
+   |---|---|
+   | Python (MCP-001) | the handler's docstring, or `description=` on the registration |
+   | TypeScript (MCP-011) | the `description` field on the tool registration |
+   | Go (MCP-015) | `mcp.WithDescription(...)`, or the `Description` field of `mcp.Tool` |
+   | C# (MCP-017) | a `[Description("...")]` attribute beside `[McpServerTool]` |
+   | PHP (MCP-019) | the `description:` argument of `#[McpTool]` |
+   | Rust (MCP-021) | `description = "..."` on `#[tool]`, **or** the `///` doc comment |
+
+   The Rust case is the one worth knowing: a tool documented the idiomatic way,
+   with a `///` comment and no attribute argument, has a description and does
+   not fire.
+5. Treat the description as versioned interface. Clients cache tool catalogs and
+   models are steered by the text; changing what a tool claims to do is a
+   behavioral change to every agent connected to the server, even though no
+   handler code moved.
+6. Remember what the rules cannot check: that the description is *true*. A tool
+   named `get_*` whose docstring promises a read and whose body writes will pass
+   every rule in this policy, and it is the failure that costs most — the model
+   selected it precisely because the definition said it was safe.
