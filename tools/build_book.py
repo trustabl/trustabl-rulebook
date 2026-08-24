@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 from collections import defaultdict
 from pathlib import Path
 
@@ -88,6 +89,24 @@ def appendix_table(rules) -> str:
     return "\n".join([line(headers), sep] + [line(r) for r in rows])
 
 
+def pack_provenance(rules_repo: Path) -> str:
+    """Describe the pack this book was built from, for the catalog header.
+
+    The PDF outlives the checkout it was rendered from, so "which rules is this"
+    has to travel with it. Falls back to the plain path when the pack is not a
+    git checkout (a tarball, a vendored copy) rather than failing the build over
+    provenance.
+    """
+    try:
+        sha = subprocess.run(
+            ["git", "-C", str(rules_repo), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "the rules pack"
+    return f"trustabl-rules@{sha}" if sha else "the rules pack"
+
+
 def build(repo: Path, rules_repo: Path) -> str:
     rules_map, errors = load_rules(rules_repo)
     if errors:
@@ -107,7 +126,9 @@ def build(repo: Path, rules_repo: Path) -> str:
 
     parts.append(latex("\\appendix"))
     parts.append(latex("\\part{Appendix}"))
-    parts.append("# Rule Catalog\n\nEvery shipped rule, generated from the pack. "
+    parts.append("# Rule Catalog\n\n"
+                 f"Every shipped rule, generated from {pack_provenance(rules_repo)} "
+                 f"({len(rules)} rules). "
                  "Risk = severity weight × confidence × 100.\n\n"
                  + latex("\\footnotesize") + "\n\n"
                  + appendix_table(rules) + "\n\n"
