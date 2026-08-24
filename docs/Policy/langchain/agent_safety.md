@@ -182,12 +182,14 @@ from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langchain_experimental.tools import ShellTool
 from langgraph.checkpoint.memory import InMemorySaver
 
+shell = ShellTool()
+
 agent = create_agent(
     model="openai:gpt-5",
-    tools=[ShellTool()],
+    tools=[shell],
     middleware=[
         HumanInTheLoopMiddleware(
-            interrupt_on={"shell": True},
+            interrupt_on={shell.name: True},
             description_prefix="Review the exact shell action before execution",
         )
     ],
