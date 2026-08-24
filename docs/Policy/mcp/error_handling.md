@@ -45,6 +45,16 @@ modest disclosure channel, and a handler often raises intentionally for a caller
 or runtime that structures it; confidence 0.6 because the body-only check does
 not see a `try` in a calling frame.
 
+**Real-world consequence:** a `create_invoice` tool raises `KeyError: 'tax_id'`
+on a customer record missing a field. The runtime hands the connecting client an
+opaque protocol error carrying the traceback — absolute server paths, the module
+layout, and whatever argument values appear in the frames. Two things follow.
+The model cannot tell whether the invoice was created before the raise, so it
+does the reasonable thing and calls again, which is how a missing error contract
+turns into the duplicate MCP-007 exists to prevent. And the disclosure crosses a
+trust boundary the author never chose: an MCP server does not know which client
+is connected, so the traceback goes wherever the session goes.
+
 **Fix type — code:** returning a structured `{"error": ..., "retryable": ...}`
 result instead of raising is a source edit.
 
