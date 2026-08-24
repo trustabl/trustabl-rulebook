@@ -36,7 +36,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from check_rulebook import load_rules
-from gen_index import SDK_FULL, SDK_LABEL, SDK_ORDER, numeric_id, risk_score
+from gen_index import (SDK_ORDER, full_name, numeric_id, ordered_categories,
+                       risk_score, short_label)
 
 FRONT_MATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 # A markdown link whose target points at a rulebook .md file -> keep only the text.
@@ -60,7 +61,7 @@ def topic_order(rules) -> dict[str, list[str]]:
     for r in rules:
         key = (r.category, r.topic)
         mins[key] = min(mins[key], numeric_id(r.rule_id))
-    out: dict[str, list[str]] = {c: [] for c in SDK_ORDER}
+    out: dict[str, list[str]] = {c: [] for c in ordered_categories(rules)}
     for (cat, topic) in sorted(mins, key=lambda k: (SDK_ORDER.index(k[0]) if k[0] in SDK_ORDER else 99, mins[k])):
         out.setdefault(cat, []).append(topic)
     return out
@@ -75,7 +76,7 @@ def appendix_table(rules) -> str:
     )
     headers = ["Id", "SDK", "Scope", "Sev", "Conf", "Risk", "Policy"]
     rows = [
-        [r.rule_id, SDK_LABEL.get(r.category, r.category), r.scope, r.severity,
+        [r.rule_id, short_label(r.category), r.scope, r.severity,
          f"{r.confidence:.2f}", risk_score(r.severity, r.confidence), r.title]
         for r in ordered
     ]
@@ -97,8 +98,8 @@ def build(repo: Path, rules_repo: Path) -> str:
     policy_dir = repo / "docs" / "Policy"
 
     parts: list[str] = []
-    for cat in SDK_ORDER:
-        parts.append(latex(f"\\part{{{SDK_FULL[cat]}}}"))
+    for cat in ordered_categories(rules):
+        parts.append(latex(f"\\part{{{full_name(cat)}}}"))
         for topic in order.get(cat, []):
             doc = policy_dir / cat / f"{topic}.md"
             if not doc.exists():
