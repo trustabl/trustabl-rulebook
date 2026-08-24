@@ -38,17 +38,22 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
-references: [LLM01, LLM06]
+  - id: OAI-112
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
+references: [LLM01, LLM06, LLM10]
 ---
 
 # Policy Rationale: Agent Wiring Safety
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110  
-**Severities:** high, high, high, medium, high, high, medium  
-**Fix types:** config, config, config, config, config, config, config  
-**References:** LLM01, LLM06
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110, OAI-112  
+**Severities:** high, high, high, medium, high, high, medium, low  
+**Fix types:** config, config, config, config, config, config, config, config  
+**References:** LLM01 (Prompt Injection), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
 
@@ -262,10 +267,49 @@ last line before the user/caller.
 are low-risk (public data, no sensitive egress), so the missing output guardrail is
 often acceptable — a review prompt more than a defect.
 
+### OAI-112 — Agent has no explicit max_turns limit (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:** an agent that no `Runner.run` / `run_sync` / `run_streamed`
+call executes with a `max_turns=` argument (predicate
+`agent_run_call_max_turns_missing`). The rule is call-site scoped: it is the
+absence across every run of that agent that fires, not the constructor.
+
+**Why it is flaggable:** without an explicit cap the agent loop runs to whatever
+`DEFAULT_MAX_TURNS` the SDK applies, rather than to a bound sized for this task. A
+model that oscillates — retrying a failing tool, re-reading the same file,
+ping-ponging between two steps — keeps spending turns, tokens and tool side
+effects until that implicit ceiling is reached. The ceiling is also the SDK's to
+change: a version bump can move it with no change on your side. An explicit cap
+turns a stuck run into an observable `MaxTurnsExceeded` at a point you chose.
+
+**Real-world consequence:** a tool starts returning a malformed payload; the model
+re-calls it every turn trying to parse it, and the run exhausts the default turn
+budget. The symptom reaching the operator is latency and spend, not a bounded
+exception naming the tool that got stuck.
+
+**Why severity is low and not medium:** a default ceiling does exist, so the loop
+is unbounded relative to intent rather than genuinely unbounded, and a short
+single-lookup agent may never approach it. It stays above informational because
+the turns being spent can carry tool side effects, not only tokens. **Fix type —
+config:** the fix is a keyword argument at the call site, not a code change.
+**Confidence 0.6:** the rule sees only `Runner.*` call sites, so an agent bounded
+some other way — an external timeout, a wrapper that caps turns, an orchestrator
+that stops the run — is over-flagged.
+
+> Shares its threat model with
+> [pydantic_ai/agent_safety.md](../pydantic_ai/agent_safety.md)'s **PYD-106**:
+> both flag an agent run whose bound is left to a framework default rather than
+> sized for the task. The axis differs — the OpenAI Agents SDK applies a default
+> turn ceiling, Pydantic AI defaults to a request cap and leaves tokens open.
+
 ---
 
 ## What this policy does not cover
 
+- Whether a run is bounded outside the `Runner.*` call site — an external
+  timeout, an orchestrator turn budget, or a wrapper that injects `max_turns` is
+  invisible to OAI-112, and what a *sensible* cap would be for a given agent is
+  out of scope: it flags the absence of an explicit limit, not one set too high.
 - The *quality* of guardrails that are present — a no-op `input_guardrail` /
   `output_guardrail` satisfies OAI-101/106/109/110 without screening anything.
 - Shell/filesystem capability delivered via a `@function_tool` (a `KindOpenAITool`)
