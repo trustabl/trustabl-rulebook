@@ -42,6 +42,7 @@ from gen_index import (SDK_ORDER, full_name, numeric_id, ordered_categories,
 FRONT_MATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 # A markdown link whose target points at a rulebook .md file -> keep only the text.
 MD_DOC_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\.md[^)]*\)")
+FENCE = re.compile(r"^\s*(```|~~~)")
 
 
 def latex(block: str) -> str:
@@ -51,8 +52,19 @@ def latex(block: str) -> str:
 
 def strip_doc(text: str) -> str:
     text = FRONT_MATTER.sub("", text, count=1)
-    text = MD_DOC_LINK.sub(r"\1", text)
-    return text.strip()
+    # Flatten intra-rulebook links (they do not resolve inside one PDF), but
+    # never inside a fenced block: a code sample containing [a](b.md) is a
+    # string literal, and rewriting it to `a` silently corrupts the sample the
+    # reader is meant to copy.
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        out.append(line if in_fence else MD_DOC_LINK.sub(r"\1", line))
+    return "\n".join(out).strip()
 
 
 def topic_order(rules) -> dict[str, list[str]]:
