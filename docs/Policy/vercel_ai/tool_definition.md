@@ -13,6 +13,11 @@ rules:
     confidence: 0.8
     scope: tool
     fix_type: code
+  - id: VAI-016
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -20,9 +25,9 @@ references: [LLM06]
 
 **Policy ID:** `vercel_ai_tool_definition`  
 **File:** `vercel_ai/tool_definition.yaml`  
-**Rules:** VAI-004, VAI-005  
-**Severities:** low, medium  
-**Fix types:** code, code  
+**Rules:** VAI-004, VAI-005, VAI-016  
+**Severities:** low, medium, low  
+**Fix types:** code, code, code  
 **References:** LLM06 (Excessive Agency)
 
 ---
@@ -35,9 +40,13 @@ Authoring hygiene for Vercel AI SDK tools built with `tool({...})` /
 **VAI-005** fires when the tool takes input but imposes no field types — it uses
 `dynamicTool` (whose input is always `unknown`) or an open schema (`z.any()`,
 `z.unknown()`, or an empty `z.object({})`) — predicates `has_params: true` AND
-`has_typed_params: false`. The `description` is the only model-visible account of
-the tool (the SDK has no docstring fallback), and the `inputSchema` is what the SDK
-turns into the model's argument schema.
+`has_typed_params: false`. **VAI-016** fires when the binding identifier
+(`VarName`) is an ambiguous name from the shared pack list (`process`, `handle`,
+`run`, …) via `name_in` — Vercel leaves `ToolDef.Name` empty, so the engine
+matches `VarName`. The `description` is the only model-visible account of the
+tool (the SDK has no docstring fallback), the `inputSchema` is what the SDK
+turns into the model's argument schema, and the binding name is what usually
+becomes the agent's tools-record key.
 
 ---
 
@@ -60,6 +69,13 @@ without validating it, a model (or an injection) can pass a value the handler ne
 anticipated — a path, a URL, a command fragment — directly into the tool's logic.
 Typing the input is the first guard that keeps a model-callable tool from being
 fed arbitrary shapes.
+
+Naming is the third leg: Vercel derives the model-facing tool name from the
+agent's `tools: { key: binding }` record, not from a `name:` field on
+`tool({...})`. Discovery therefore emits an empty `Name` and stores the binding
+identifier as `VarName`. An ambiguous binding (`const process = tool(...)`) is
+how authors commonly end up with a tools record keyed `process` — the same
+routing failure CSDK-007 / OAI-007 catch on an explicit function name.
 
 ---
 
@@ -109,6 +125,26 @@ the open-schema shapes, so a `dynamicTool` that genuinely cannot be typed and
 validates inside `execute()` is over-flagged, and a schema that is typed but still
 loose (`z.record(z.any())`) may slip through as a false negative.
 
+### VAI-016 — Ambiguous Vercel AI tool binding name (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a Vercel tool whose `VarName` (binding identifier) is in the
+shared ambiguous-name list (`process`, `handle`, `run`, `do`, `execute`,
+`perform`, `work`, `go`, `thing`, `stuff`) — predicate `name_in`, with the
+engine falling back to `VarName` when `Name` is empty.
+
+**Why it is flaggable:** the binding name is what authors usually promote to the
+agent's tools-record key; a generic key gives the model no routing signal.
+
+**Real-world consequence:** `const process = tool({...})` registered as
+`tools: { process }` is called for every vague "handle this" request, or skipped
+when a better-named sibling exists.
+
+**Why severity is low and not medium:** same as CSDK-007 / OAI-007 — routing
+quality, no direct exploit. **Fix type — code:** rename the binding (and the
+record key). **Confidence 0.85:** slightly below the Python siblings because the
+model-facing key can differ from `VarName` (`tools: { summarizeInvoice: t }`
+escapes), and the list is a closed heuristic.
+
 ---
 
 ## What this policy does not cover
@@ -119,10 +155,9 @@ loose (`z.record(z.any())`) may slip through as a false negative.
 - Whether `execute()` actually validates an `unknown` input from a `dynamicTool`.
   A `dynamicTool` that validates internally still fires (a deliberate false
   positive) — the rule cannot see the in-handler guard.
-- Tool *naming*: a Vercel tool is keyed by its position in the agent's `tools`
-  record rather than a function name, so name-based heuristics (e.g. the mutation
-  prefix idempotency check that exists for Python SDKs) do not apply here — Vercel
-  ships no name-based rule, which is a deliberate coverage gap.
+- A descriptive binding registered under an ambiguous tools-record key
+  (`tools: { process: fetchWeather }`) — discovery matches `VarName`, not the
+  record key.
 - TypeScript only: a tool defined in plain `.js` may not be analyzed with the same
   fidelity as a typed `.ts` definition.
 - Whether the schema matches the tool's real behavior — a misleading-but-present
@@ -160,3 +195,5 @@ export const transferFunds = tool({
    typed, and even then validate the shape inside `execute()` before using it.
 4. Keep the description and the schema in sync with the handler's real behavior —
    an overstated description is its own correctness hazard.
+5. Use a verb-object binding name (`transferFunds`, not `process` / `handle`) and
+   register that same identifier as the agent's tools-record key.
