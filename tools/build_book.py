@@ -131,8 +131,18 @@ def main() -> int:
 
     out = repo / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build(repo, rules_repo), encoding="utf-8", newline="\n")
-    print(f"wrote {out.relative_to(repo)}")
+    # write_bytes (not write_text(newline=...)) keeps the output LF on every
+    # platform AND runs on Python 3.9 — write_text's newline kwarg is 3.10+,
+    # which crashes assembly under the repo's default python3. Same reasoning
+    # as gen_index.py.
+    out.write_bytes(build(repo, rules_repo).encode("utf-8"))
+    # A path outside the repo has no relative form; report it as given rather
+    # than raising after the file has already been written.
+    try:
+        shown = out.relative_to(repo)
+    except ValueError:
+        shown = out
+    print(f"wrote {shown}")
     return 0
 
 
