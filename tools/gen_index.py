@@ -55,9 +55,12 @@ SEVERITY_WEIGHT = {
     "info": Decimal("0.05"),
 }
 
+# Derived from SEVERITY_WEIGHT rather than restated, so the weights published in
+# every index cannot disagree with the ones used to compute the risk column.
 RISK_FORMULA_LINE = (
     "Risk score = `severity_weight × confidence × 100` (engine formula; weights: "
-    "low=0.15, medium=0.40, high=0.70). Higher = worse."
+    + ", ".join(f"{sev}={w}" for sev, w in SEVERITY_WEIGHT.items())
+    + "). Higher = worse."
 )
 
 MASTER_PREAMBLE = """# Policy index

@@ -3,7 +3,7 @@
 
 26 rules — 14 tool · 11 agent · 1 repo
 
-Risk score = `severity_weight × confidence × 100` (engine formula; weights: low=0.15, medium=0.40, high=0.70). Higher = worse.
+Risk score = `severity_weight × confidence × 100` (engine formula; weights: critical=1.0, high=0.7, medium=0.4, low=0.15, info=0.05). Higher = worse.
 
 |    | Id      | SDK/ADK    | Scope | Applies To        | Policy                                                                                | Severity | Confidence | Risk | Source                                                                                                       |
 | -- | ------- | ---------- | ----- | ----------------- | ------------------------------------------------------------------------------------- | -------- | ---------- | ---- | ------------------------------------------------------------------------------------------------------------ |
