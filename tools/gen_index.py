@@ -272,6 +272,15 @@ def main() -> int:
     for cat in ordered_categories(rules):
         targets[rulebook_repo / cat / "POLICY_INDEX.md"] = build_per_sdk(cat, rules)
 
+    # An index file for a family the pack no longer ships is invisible to the
+    # loop below, which only visits files it intends to write. Without this the
+    # rulebook would keep publishing an index for a removed family indefinitely.
+    orphans = sorted(
+        p.relative_to(rulebook_repo).as_posix()
+        for p in rulebook_repo.glob("*/POLICY_INDEX.md")
+        if p not in targets
+    )
+
     drift = []
     for path, content in targets.items():
         rel = path.relative_to(rulebook_repo).as_posix()
@@ -287,13 +296,23 @@ def main() -> int:
             path.write_bytes(content.encode("utf-8"))
             print(f"wrote {rel}")
 
+    if orphans:
+        # Reported in both modes: regeneration cannot remove these, so a silent
+        # pass would be misleading even when writing.
+        print("ORPHANED index files (no such family in the pack; delete them):")
+        for o in orphans:
+            print(f"  {o}")
+
     if args.check:
-        if drift:
-            print("STALE index files (run `python tools/gen_index.py`):")
-            for d in drift:
-                print(f"  {d}")
+        if drift or orphans:
+            if drift:
+                print("STALE index files (run `python tools/gen_index.py`):")
+                for d in drift:
+                    print(f"  {d}")
             return 1
         print(f"OK: {len(targets)} index file(s) up to date ({len(rules)} rules).")
+    elif orphans:
+        return 1
     return 0
 
 
