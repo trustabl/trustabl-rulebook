@@ -39,7 +39,9 @@ Usage:
     --rules-repo  Path to the trustabl-rules checkout (default: ../trustabl-rules,
                   or $TRUSTABL_RULES_REPO).
     --strict      Treat rationale docs with NO front-matter as errors (default:
-                  warn — lets the migration land incrementally).
+                  warn). Every doc carries front-matter and CI passes --strict,
+                  so the lenient default exists only for a work-in-progress doc
+                  on a local run.
 
 Exit code: 0 = clean, 1 = at least one error (or a strict warning).
 """
@@ -306,8 +308,18 @@ def check(
 def main() -> int:
     ap = argparse.ArgumentParser(description="Rulebook consistency gate.")
     default_rules = os.environ.get("TRUSTABL_RULES_REPO", "../trustabl-rules")
-    ap.add_argument("--rules-repo", default=default_rules)
-    ap.add_argument("--strict", action="store_true")
+    ap.add_argument(
+        "--rules-repo",
+        default=default_rules,
+        help="path to the trustabl-rules checkout "
+             "(default: %(default)s, or $TRUSTABL_RULES_REPO)",
+    )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="treat a doc with no YAML front-matter as an error rather than a "
+             "warning; CI runs with this on",
+    )
     args = ap.parse_args()
 
     rulebook_repo = Path(__file__).resolve().parent.parent
