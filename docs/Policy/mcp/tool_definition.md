@@ -63,6 +63,11 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-028
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -70,7 +75,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022, MCP-028  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -89,11 +94,12 @@ predicate `mcp_tool` kind) and the TypeScript `@modelcontextprotocol/sdk`
 `mcp.AddTool(server, &mcp.Tool{...}, fn)`), the official C# SDK's
 `[McpServerTool]`-attributed methods, and the PHP SDKs' (official mcp/sdk +
 community php-mcp/server) `#[McpTool]`-attributed methods. MCP-001/002/003 are
-the Python rules; MCP-011 is the TypeScript description rule; MCP-015/016 are the
-Go rules; MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules;
-MCP-019 (no description) and MCP-020 (ambiguous name) are the PHP rules; MCP-021
-(no description) and MCP-022 (ambiguous name) are the Rust rules (official rmcp
-crate, `#[tool]`-attributed methods).
+the Python rules; MCP-011 (no description) and MCP-028 (ambiguous name) are the
+TypeScript rules; MCP-015/016 are the Go rules; MCP-017 (no description) and
+MCP-018 (ambiguous name) are the C# rules; MCP-019 (no description) and MCP-020
+(ambiguous name) are the PHP rules; MCP-021 (no description) and MCP-022
+(ambiguous name) are the Rust rules (official rmcp crate, `#[tool]`-attributed
+methods).
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
@@ -154,6 +160,19 @@ from a non-literal expression is captured as empty and also fires.
 the registration config's `description` is the model's routing signal. Confidence
 0.85 (vs MCP-001's 0.9) reflects that the TypeScript capture can miss a
 description supplied through an unusual expression shape.
+
+### MCP-028 — Ambiguous TypeScript MCP tool name (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a TypeScript MCP tool whose name — the first argument to
+`server.registerTool(...)` or the legacy `server.tool(...)` — is in the fixed
+ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
+
+**Why it is flaggable:** identical to MCP-003 — an ambiguous name gives the model
+no intent signal and collides across servers in a shared session, and the cost is
+paid by every uncontrolled consumer of the published catalog. This closes the
+TypeScript gap: every other MCP language surface already had an ambiguous-name
+rule (MCP-003 / 016 / 018 / 020 / 022) while TypeScript only had the description
+rule (MCP-011).
 
 ### MCP-015 — Go MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
