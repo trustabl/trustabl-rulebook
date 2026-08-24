@@ -63,6 +63,11 @@ jobs:
       - name: Consistency gate
         run: python tools/check_rulebook.py --rules-repo .rules --strict
 
+      # Every relative link and #anchor between docs resolves. Needs no rules
+      # checkout: this one is purely about the rulebook's internal wiring.
+      - name: Internal links resolve
+        run: python tools/check_links.py
+
       # The committed POLICY_INDEX files match what the generator would produce.
       - name: Index is up to date
         run: python tools/gen_index.py --rules-repo .rules --check
