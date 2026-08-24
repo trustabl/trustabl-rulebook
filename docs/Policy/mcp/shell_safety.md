@@ -80,3 +80,76 @@ Whether a given literal command is actually safe; spawns hidden behind a
 cross-module helper or a renamed alias; async spawners
 (`asyncio.create_subprocess_*`) and non-`child_process` TypeScript spawners; and
 the HTTP-exfiltration path, which SSRF ([ssrf.md](ssrf.md)) covers.
+
+---
+
+## Recommendations beyond the fix
+
+The safe pattern — typed library API first, and if a spawn is genuinely
+unavoidable then an argv list with `shell=False`, a timeout, and a stripped
+environment — is in
+[openai_sdk/shell_safety.md](../openai_sdk/shell_safety.md#recommendations-beyond-the-fix)
+and applies unchanged to MCP-010. MCP-012 is the TypeScript half, where the
+distinction lives in which child-process function you reach for:
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { z } from "zod";
+
+const run = promisify(execFile);
+const server = new McpServer({ name: "vcs", version: "1.0.0" });
+
+server.tool(
+  "git_log",
+  {
+    // The schema is the allow-list, and it is published to the client.
+    revision: z.string().regex(/^[0-9a-f]{7,40}$/),
+    limit: z.number().int().min(1).max(100),
+  },
+  async ({ revision, limit }) => {
+    // execFile, not exec: an argv array, so there is no shell to inject into.
+    const { stdout } = await run(
+      "git",
+      ["log", "-n", String(limit), "--format=%H %s", revision],
+      {
+        cwd: "/srv/repo",
+        timeout: 10_000,
+        maxBuffer: 1_000_000,
+        env: { PATH: "/usr/bin:/bin", HOME: "/srv/repo" },  // NOT process.env
+      },
+    );
+    return { content: [{ type: "text", text: stdout }] };
+  },
+);
+```
+
+MCP-specific additions:
+
+1. **Expect the rule to keep firing.** MCP-010 and MCP-012 match the spawn
+   itself, not the quality of its arguments, and that is deliberate: an argv
+   array closes command injection but leaves the tool a
+   run-a-program-on-the-server primitive. Only removing the spawn clears the
+   finding. Suppress it against a specific reviewed handler if you must, but do
+   not read a passing scan as "the shell is now safe".
+2. Pass `env` explicitly instead of inheriting. This matters more on an MCP
+   server than anywhere else the rule fires: the server process holds the
+   credentials for *every* upstream its other tools talk to, and a spawned
+   child inherits all of them by default. One shell-capable tool becomes a
+   credential dump for the whole server.
+3. Reach for `execFile`/`spawn` with an argv array, never `exec`/`execSync`,
+   which take a command string and hand it to `/bin/sh`. This is the single
+   highest-value TypeScript-side change, and the two names are close enough to
+   be picked by autocomplete.
+4. Put the constraint in the input schema. A `z.string().regex(...)` on a
+   revision is reviewable, is published to the connecting client, and rejects
+   the bad value before any process starts — where a check inside the handler
+   body is invisible to everyone reading the tool's contract.
+5. Bound both time and output: `timeout` so a wedged child does not hold the
+   session worker the way a missing network timeout would
+   ([network.md](network.md)), and `maxBuffer` so a chatty command cannot
+   exhaust server memory through a tool that looked read-only.
+6. Pin `cwd`. A relative path in a spawned command resolves against whatever
+   directory the server happened to start in, which is a property of the
+   deployment rather than of the tool.
