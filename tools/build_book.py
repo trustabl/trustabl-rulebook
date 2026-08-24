@@ -98,13 +98,31 @@ def build(repo: Path, rules_repo: Path) -> str:
     policy_dir = repo / "docs" / "Policy"
 
     parts: list[str] = []
+    used: set[Path] = set()
     for cat in ordered_categories(rules):
         parts.append(latex(f"\\part{{{full_name(cat)}}}"))
         for topic in order.get(cat, []):
             doc = policy_dir / cat / f"{topic}.md"
             if not doc.exists():
                 raise SystemExit(f"missing rationale doc: {doc.relative_to(repo)}")
+            used.add(doc)
             parts.append(strip_doc(doc.read_text(encoding="utf-8")))
+
+    # A doc the loop never reached is a chapter missing from the book. The
+    # loop raises for a doc it looked for and could not find; this is the other
+    # direction — a doc that exists and was never asked for, because its family
+    # or topic fell out of the iteration. That is how the whole Claude Skills
+    # family was absent from the PDF while its rules filled the appendix.
+    unreachable = sorted(
+        d.relative_to(repo).as_posix()
+        for d in policy_dir.rglob("*.md")
+        if d not in used
+    )
+    if unreachable:
+        raise SystemExit(
+            "rationale docs never reached by the chapter loop:\n  "
+            + "\n  ".join(unreachable)
+        )
 
     parts.append(latex("\\appendix"))
     parts.append(latex("\\part{Appendix}"))
