@@ -23,6 +23,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: PYD-106
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
 references: [LLM05, LLM06, LLM10]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM05, LLM06, LLM10]
 
 **Policy ID:** `pydantic_ai_agent_safety`  
 **File:** `pydantic_ai/agent_safety.yaml`  
-**Rules:** PYD-101, PYD-102, PYD-103, PYD-105  
-**Severities:** low, high, medium, low  
-**Fix types:** config, config, config, config  
+**Rules:** PYD-101, PYD-102, PYD-103, PYD-105, PYD-106  
+**Severities:** low, high, medium, low, low  
+**Fix types:** config, config, config, config, config  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -181,6 +186,40 @@ constructor change. **Confidence 0.7:** the rule cannot tell whether the agent's
 tools have side effects, so it over-flags exhaustive-mode agents whose tools are
 all read-only.
 
+### PYD-106 — Agent has no explicit usage_limits set (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:** an agent that no `run` / `run_sync` / `run_stream` call
+executes with a `usage_limits=` argument (predicate
+`agent_run_call_usage_limits_missing`). The rule is call-site scoped: it is the
+absence across every run of that agent that fires, not the constructor.
+
+**Why it is flaggable:** with no explicit limit Pydantic AI falls back to a bare
+`UsageLimits()`, which caps request count and leaves token and cost usage
+unbounded. The default therefore bounds the wrong axis. A run can sit well inside
+the request cap while a long tool-calling chain, or a model that oscillates
+between two steps, spends far more tokens than the task warrants. An explicit,
+task-sized `UsageLimits` also converts a runaway run into a `UsageLimitExceeded`
+the caller can catch, instead of a cost overrun nobody observes until the bill.
+
+**Real-world consequence:** a summarization agent is handed a document far larger
+than expected; each request stays under the default request cap while the run
+consumes an order of magnitude more tokens than budgeted, and the overrun surfaces
+on an invoice rather than as a handled exception.
+
+**Why severity is low and not medium:** the request cap does bound the loop, so
+the exposure is spend and latency rather than a security or correctness failure,
+and a short agent over small inputs may never approach a limit worth setting.
+**Fix type — config:** the fix is a keyword argument at the call site, not a code
+change. **Confidence 0.6:** the rule sees only `run` / `run_sync` / `run_stream`
+call sites, so an agent bounded some other way — an external budget guard, a
+wrapper that injects limits, a caller-side timeout — is over-flagged.
+
+> Shares its threat model with
+> [openai_sdk/agent_safety.md](../openai_sdk/agent_safety.md)'s **OAI-112**: both
+> flag an agent run whose bound is left to a framework default rather than sized
+> for the task. The axis differs — Pydantic AI defaults to a request cap and
+> leaves tokens open, the OpenAI Agents SDK applies a default turn ceiling.
+
 ---
 
 ## What this policy does not cover
@@ -190,10 +229,12 @@ all read-only.
 - Hand-rolled URL fetches inside a tool body — caught by **PYD-005** (ssrf.md);
   PYD-103 covers only the native fetcher tools.
 - Whether the agent's prompt surface is actually reachable by untrusted content —
-  all four rules flag a configuration, not a proven injection path.
+  all five rules flag a configuration, not a proven injection path.
 - PYD-101 cannot tell whether a `str` output is consumed by code (risky) or only
   shown to a human (safe); PYD-105 cannot tell whether pending tools have side
-  effects.
+  effects; PYD-106 cannot tell whether a run is bounded outside the call site.
+- What a *sensible* usage limit would be for a given agent. PYD-106 flags the
+  absence of an explicit limit, not a limit that is set too high.
 - A native tool referenced under an alias, or a provider tool outside the listed
   class set, may escape the class-name match. Whether a native tool's execution or
   fetch environment is sandboxed is not visible to the match.
