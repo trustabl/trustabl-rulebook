@@ -1,6 +1,6 @@
 # Rulebook tooling
 
-Both tools read the shipped pack from a sibling `trustabl-rules` checkout
+All three tools read the shipped pack from a sibling `trustabl-rules` checkout
 (override with `--rules-repo` or `$TRUSTABL_RULES_REPO`) and share one rule
 loader (`check_rulebook.load_rules`), so they can never disagree about what
 ships. Requires python 3.11+ and pyyaml.
@@ -40,11 +40,11 @@ confidence × 100 using the engine's weights (critical 1.0 / high 0.7 /
 medium 0.4 / low 0.15 / info 0.05), one decimal, round-half-up.
 
 ```bash
-python tools/gen_index.py            # write the 4 index files
+python tools/gen_index.py            # write the master index + one per family
 python tools/gen_index.py --check    # CI: exit 1 if regeneration would change anything
 ```
 
-Wire `--check` into CI next to the consistency gate so a rule added to the pack
+`--check` runs in CI next to the consistency gate, so a rule added to the pack
 without regenerating the index fails the build.
 
 ## `check_rulebook.py` — consistency gate
@@ -78,11 +78,11 @@ python tools/check_rulebook.py --strict              # docs without front-matter
 book is consistent with the pack; `1` = at least one error; `2` = the rules repo
 was not found.
 
-### Migration status
+### Front-matter
 
-Docs without front-matter are reported as **warnings** (not errors) so the
-migration can land incrementally. Once every doc carries front-matter, switch CI
-to `--strict` to make missing front-matter a hard failure.
+Every rationale doc carries front-matter, and CI runs the gate with `--strict`,
+so a doc without it is a hard failure. The default (warn, not error) is kept for
+local runs on a work-in-progress doc.
 
 ### CI
 
