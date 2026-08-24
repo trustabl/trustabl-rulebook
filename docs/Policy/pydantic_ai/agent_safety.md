@@ -23,6 +23,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: PYD-106
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
 references: [LLM05, LLM06, LLM10]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM05, LLM06, LLM10]
 
 **Policy ID:** `pydantic_ai_agent_safety`  
 **File:** `pydantic_ai/agent_safety.yaml`  
-**Rules:** PYD-101, PYD-102, PYD-103, PYD-105  
-**Severities:** low, high, medium, low  
-**Fix types:** config, config, config, config  
+**Rules:** PYD-101, PYD-102, PYD-103, PYD-105, PYD-106  
+**Severities:** low, high, medium, low, low  
+**Fix types:** config, config, config, config, config  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -47,7 +52,9 @@ type — `output_type` is absent (defaulting to `str`) or set explicitly to `str
 `agent_uses_hosted_tool_class`). **PYD-103** fires when the agent wires a native
 web-retrieval tool — `WebFetchTool`, `UrlContextTool`, or `WebSearchTool` (same
 predicate). **PYD-105** fires when `end_strategy="exhaustive"` (predicate
-`agent_kwarg_value`).
+`agent_kwarg_value`). **PYD-106** fires when no `run`/`run_sync`/`run_stream`
+call that executes this agent passes `usage_limits` (predicate
+`agent_run_call_usage_limits_missing`).
 
 ---
 
@@ -180,6 +187,52 @@ type — config:** the fix is leaving `end_strategy` at its `early` default, a
 constructor change. **Confidence 0.7:** the rule cannot tell whether the agent's
 tools have side effects, so it over-flags exhaustive-mode agents whose tools are
 all read-only.
+
+
+### PYD-106 — Pydantic AI agent has no explicit usage_limits set (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:** no `agent.run(...)` / `run_sync(...)` / `run_stream(...)` call
+site resolving to this agent passes a `usage_limits=` argument
+(`agent_run_call_usage_limits_missing`).
+
+**Why it is flaggable:** with no `usage_limits`, Pydantic AI applies a bare
+`UsageLimits()`. That is not "no limit" — it is a *request* cap with token and cost
+usage left entirely unbounded. The distinction matters, because the presence of a
+default invites the assumption that spend is bounded when only step count is. A run
+that oscillates, or one whose tool-calling chain balloons, consumes tokens
+proportional to the growing context on every step, and the request cap is a poor
+proxy for that: a handful of requests over a context that has grown to hundreds of
+thousands of tokens costs far more than many requests over a small one (unbounded
+consumption, LLM10).
+
+**Real-world consequence:**
+
+- A research agent re-reads a large document on each of its permitted steps. It
+  stays well inside the request cap while its token spend grows superlinearly with
+  the accumulated context, and nothing stops it.
+- A model that oscillates between two tool calls burns the run's entire token
+  budget without ever tripping the request limit, and the overrun is visible only
+  on the bill.
+- With no limit set, a runaway run ends by exhausting a provider quota or a
+  timeout rather than by raising `UsageLimitExceeded`, so there is no clean signal
+  to catch, attribute, and handle.
+
+**Why severity is low and not medium:** the consequence is cost and latency, not
+capability — no privilege boundary is crossed and no data is exposed. The default
+`UsageLimits()` also does bound request count, so the failure is an unbounded
+*dimension* rather than an unbounded loop. Low matches OAI-112, the equivalent
+turn-bound rule in the OpenAI pack.
+
+**Fix type — config:** `usage_limits=UsageLimits(...)` is an argument at the run
+call site. No tool or agent source changes.
+
+**Confidence 0.6:** the check resolves run call sites statically, which errs in both
+directions. False positives: a run invoked through a wrapper, a helper, or a
+partial that supplies `usage_limits` out of sight of the call site the rule reads;
+and a deployment that bounds spend outside the framework, at a gateway or provider
+quota. False negatives: a `usage_limits=UsageLimits()` passed explicitly but left
+empty satisfies the predicate while bounding nothing more than the default did.
+
 
 ---
 

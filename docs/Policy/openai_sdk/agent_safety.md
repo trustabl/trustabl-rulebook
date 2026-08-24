@@ -38,17 +38,22 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
-references: [LLM01, LLM06]
+  - id: OAI-112
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
+references: [LLM01, LLM06, LLM10]
 ---
 
 # Policy Rationale: Agent Wiring Safety
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110  
-**Severities:** high, high, high, medium, high, high, medium  
-**Fix types:** config, config, config, config, config, config, config  
-**References:** LLM01, LLM06
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110, OAI-112  
+**Severities:** high, high, high, medium, high, high, medium, low  
+**Fix types:** config, config, config, config, config, config, config, config  
+**References:** LLM01, LLM06, LLM10 (Unbounded Consumption)
 
 ---
 
@@ -261,6 +266,53 @@ last line before the user/caller.
 **Confidence 0.6:** the lower confidence reflects that many content-fetching agents
 are low-risk (public data, no sensitive egress), so the missing output guardrail is
 often acceptable — a review prompt more than a defect.
+
+
+### OAI-112 — OpenAI Agents SDK agent has no explicit max_turns limit (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:** no `Runner.run(...)` / `run_sync(...)` / `run_streamed(...)`
+call site resolving to this agent passes a `max_turns=` argument
+(`agent_run_call_max_turns_missing`).
+
+**Why it is flaggable:** the loop still terminates — the SDK applies
+`DEFAULT_MAX_TURNS` — but it terminates at a ceiling nobody chose for this task.
+Two things follow. First, the bound is not sized to the work: a single-lookup
+agent and a multi-step research agent get the same ceiling, so the lookup agent
+that starts oscillating has a long way to run before anything stops it, consuming
+tokens and *tool side effects* the whole way. Second, an implicit ceiling is a
+value the SDK owns; it can move between versions with no change on your side, so
+the effective bound on your agent is a dependency's default rather than a
+deliberate decision (unbounded consumption, LLM10). An explicit cap also converts
+a stuck run into a clean, catchable `MaxTurnsExceeded` at a point you chose,
+instead of a slow burn to a limit you did not.
+
+**Real-world consequence:**
+
+- An agent whose tool call keeps failing retries it for the whole default budget.
+  Because the tools are not read-only, each turn re-issues real side effects —
+  duplicate tickets, repeated writes — not just tokens.
+- An SDK upgrade raises `DEFAULT_MAX_TURNS`. Every agent without an explicit cap
+  silently gets a larger blast radius, and nothing in the diff shows it.
+- A run that stalls is eventually killed by a platform timeout rather than raising
+  `MaxTurnsExceeded`, so the failure arrives with no attributable cause.
+
+**Why severity is low and not medium:** the loop is bounded, just not deliberately,
+and the consequence is cost and duplicated side effects rather than a crossed
+privilege boundary. The rules in this file that grant or fail to screen capability
+(OAI-101 through OAI-110) are the higher-severity ones; this is a hygiene control
+on top of them. Low matches PYD-106, the equivalent bound in the Pydantic AI pack.
+
+**Fix type — config:** `max_turns=` is an argument at the runner call site. No
+agent or tool source changes.
+
+**Confidence 0.6:** the check resolves run call sites statically and errs in both
+directions. False positives: a run invoked through a wrapper, a helper, or a
+`functools.partial` that supplies `max_turns` out of sight of the call site the
+rule reads; and a deployment bounded externally by a platform timeout or budget.
+False negatives: `max_turns` passed but set absurdly high satisfies the predicate
+while bounding nothing in practice — the rule checks that a bound was chosen, not
+that it was chosen well.
+
 
 ---
 
