@@ -226,6 +226,8 @@ def check(
     warnings: list[str] = []
 
     documented: set[str] = set()
+    # rule id -> the doc that claimed it first, for the duplicate message.
+    first_doc: dict[str, str] = {}
     # policy_id disagreements are a per-doc fact; report each doc once rather
     # than once per rule it carries.
     pid_reported: set[Path] = set()
@@ -246,6 +248,18 @@ def check(
                     f"(removed or typo)"
                 )
                 continue
+            # COVERAGE — a rule may be documented once. Two docs claiming the
+            # same rule both satisfy coverage, so nothing caught it, and the
+            # assembled book would carry that rule's defense twice under
+            # different chapters. The likely cause is splitting a policy doc
+            # and copying its front-matter without pruning the id list.
+            if rid in documented:
+                errors.append(
+                    f"{rel}: {rid} is already documented by "
+                    f"{first_doc[rid]}"
+                )
+            else:
+                first_doc[rid] = rel
             documented.add(rid)
 
             # PLACEMENT — policy_id. The template guide calls this a MUST
