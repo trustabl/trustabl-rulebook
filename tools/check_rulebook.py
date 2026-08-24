@@ -226,6 +226,11 @@ def check(
     warnings: list[str] = []
 
     documented: set[str] = set()
+    # rule id -> the doc that claimed it first, for the duplicate message.
+    first_doc: dict[str, str] = {}
+    # policy_id disagreements are a per-doc fact; report each doc once rather
+    # than once per rule it carries.
+    pid_reported: set[Path] = set()
 
     for doc in docs:
         rel = doc.path.relative_to(rulebook_repo).as_posix()
@@ -243,7 +248,33 @@ def check(
                     f"(removed or typo)"
                 )
                 continue
+            # COVERAGE — a rule may be documented once. Two docs claiming the
+            # same rule both satisfy coverage, so nothing caught it, and the
+            # assembled book would carry that rule's defense twice under
+            # different chapters. The likely cause is splitting a policy doc
+            # and copying its front-matter without pruning the id list.
+            if rid in documented:
+                errors.append(
+                    f"{rel}: {rid} is already documented by "
+                    f"{first_doc[rid]}"
+                )
+            else:
+                first_doc[rid] = rel
             documented.add(rid)
+
+            # PLACEMENT — policy_id. The template guide calls this a MUST
+            # ("MUST equal policy.id in the paired YAML") and nothing enforced
+            # it: the field was parsed on both sides and never compared.
+            if (
+                doc.policy_id
+                and doc.policy_id != spec.policy_id
+                and doc.path not in pid_reported
+            ):
+                pid_reported.add(doc.path)
+                errors.append(
+                    f"{rel}: policy_id {doc.policy_id!r} != pack "
+                    f"{spec.policy_id!r} ({spec.source})"
+                )
 
             # CONSISTENCY
             if dr.severity is not None and dr.severity != spec.severity:
