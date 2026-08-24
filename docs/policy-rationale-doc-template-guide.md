@@ -1,12 +1,18 @@
 # Policy Rationale Doc — Template Guide
 
-Every policy YAML file in this repository requires a paired rationale document at:
+Every policy YAML file in
+[trustabl-rules](https://github.com/trustabl/trustabl-rules) requires a paired
+rationale document, and that document lives *here* at:
 
 ```
 docs/Policy/<category>/<topic>.md
 ```
 
-Mirror the YAML directory structure exactly. Create the `.md` at the same time as the YAML — never retroactively.
+This repo holds no rule YAML — a rule spans two repositories, and the pairing is
+what keeps them in step. Mirror the pack's directory structure exactly:
+`<category>/<topic>.yaml` there becomes `docs/Policy/<category>/<topic>.md`
+here. Write the `.md` as part of the same change as the YAML — never
+retroactively.
 
 ---
 
