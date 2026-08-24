@@ -3,7 +3,9 @@
 Both tools read the shipped pack from a sibling `trustabl-rules` checkout
 (override with `--rules-repo` or `$TRUSTABL_RULES_REPO`) and share one rule
 loader (`check_rulebook.load_rules`), so they can never disagree about what
-ships. Requires python 3.11+ and pyyaml.
+ships. Requires python 3.9+ and pyyaml — 3.9 because that is the interpreter a
+stock macOS provides, and the tools are deliberately kept runnable on it (see
+the `write_bytes` note in `gen_index.py`). CI pins 3.12.
 
 ## `build_book.py` + `make book` — PDF build
 
@@ -68,7 +70,7 @@ It reads the YAML front-matter required on every `docs/Policy/<category>/<topic>
 ### Usage
 
 ```bash
-# Requires: python 3.11+, pyyaml. A sibling trustabl-rules checkout.
+# Requires: python 3.9+, pyyaml. A sibling trustabl-rules checkout.
 python tools/check_rulebook.py                       # ../trustabl-rules by default
 python tools/check_rulebook.py --rules-repo /path/to/trustabl-rules
 python tools/check_rulebook.py --strict              # docs without front-matter are errors, not warnings
