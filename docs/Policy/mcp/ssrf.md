@@ -76,3 +76,68 @@ TypeScript SDK; a plain string-literal URL does not fire.
 Whether the dynamic URL is genuinely attacker-controlled vs a fixed-base path;
 allow-list validation the rule cannot see; DNS-rebinding and redirect-based SSRF
 after an initially-safe host; and clients outside the recognized set.
+
+---
+
+## Recommendations beyond the fix
+
+The Python safe pattern — host allow-list, pre-connect address-range check,
+redirects disabled — is in
+[claude_sdk/ssrf.md](../claude_sdk/ssrf.md#recommendations-beyond-the-fix) and
+applies unchanged to MCP-008. MCP-013 is the TypeScript half, where the same
+controls have different names:
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { lookup } from "node:dns/promises";
+import { z } from "zod";
+
+// Rejects loopback, link-local, and private ranges in BOTH address families.
+import { assertPublicAddress } from "./net-guard.js";
+
+const server = new McpServer({ name: "reports", version: "1.0.0" });
+
+server.tool(
+  "fetch_report",
+  // The host is the security boundary, so it is an enum — not a free string.
+  { host: z.enum(["api.example.com", "data.example.com"]), path: z.string() },
+  async ({ host, path }) => {
+    for (const { address } of await lookup(host, { all: true })) {
+      assertPublicAddress(address);
+    }
+    const res = await fetch(`https://${host}/${path.replace(/^\/+/, "")}`, {
+      redirect: "manual",                      // an allowed host must not bounce us inward
+      signal: AbortSignal.timeout(10_000),
+    });
+    const body = (await res.text()).slice(0, 500_000);
+    return { content: [{ type: "text", text: body }] };
+  },
+);
+```
+
+MCP-specific additions:
+
+1. **Expect the rule to keep firing.** Both MCP-008 and MCP-013 match a
+   non-literal URL, and every allow-listed implementation above still builds its
+   URL from a variable — the sample here would fire MCP-013 as written. That is
+   the 0.6 confidence doing its job: the finding asks you to show the
+   containment, and the allow-list is the answer. Suppress it on the tool once
+   the guard is real; do not rewrite the guard to dodge the predicate.
+2. Constrain the host in the input schema, not just in the handler body. A
+   `z.enum` (or Python `Literal`) publishes the allow-list to the connecting
+   client, so a model does not waste turns proposing hosts that will be
+   refused, and the schema becomes the reviewable artifact.
+3. Set `redirect: "manual"` — TypeScript's default is `follow`, so the
+   Node/`undici` equivalent of the Python `follow_redirects=False` is opt-out,
+   not opt-in. An allow-listed host that 302s to `169.254.169.254` defeats a
+   check performed only before the first hop.
+4. Have the address guard cover IPv6. A check written against dotted-quad
+   strings passes `::1`, `fc00::/7`, `fe80::/10`, and IPv4-mapped forms like
+   `::ffff:169.254.169.254` — a metadata endpoint reachable by a guard that
+   only knows about IPv4.
+5. Remember the MCP server is a network position, not just a process. The
+   reason SSRF matters more here than in an in-process SDK tool is that the
+   server usually sits somewhere with reachability the client deliberately does
+   not have; block the metadata CIDR and internal ranges at the egress layer
+   too, so a missed handler is not the only thing standing between a connecting
+   client and the credential endpoint.
