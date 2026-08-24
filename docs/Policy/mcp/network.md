@@ -54,3 +54,59 @@ function or module boundaries (resolved only within a single function today).
 Retries, circuit breaking, and connection-pool exhaustion; aliased clients
 resolved across function/module boundaries; and async HTTP clients whose method
 names are not in the callee set.
+
+---
+
+## Recommendations beyond the fix
+
+```python
+import httpx
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("reports")
+
+# One shared client, one default timeout. A new call site inherits the bound
+# instead of having to remember it.
+_http = httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0))
+
+
+@mcp.tool()
+def fetch_report(report_id: str) -> dict:
+    """Fetch a rendered report by id from the reports service."""
+    try:
+        # Explicit per-call timeout is the contract MCP-004 checks; the client
+        # default above is defense in depth for call sites added later.
+        resp = _http.get(f"https://reports.internal/v1/{report_id}", timeout=10.0)
+        resp.raise_for_status()
+    except httpx.TimeoutException:
+        return {"error": "reports service did not respond in time", "retryable": True}
+    except httpx.HTTPStatusError as exc:
+        return {
+            "error": f"reports service returned {exc.response.status_code}",
+            "retryable": exc.response.status_code >= 500,
+        }
+    return {"report": resp.text[:500_000]}
+```
+
+The timeout rationale itself is in
+[openai_sdk/network.md](../openai_sdk/network.md#recommendations-beyond-the-fix).
+MCP-specific additions:
+
+1. Size the handler's timeout against the *client's* patience, not just the
+   upstream host's. An MCP client applies its own request deadline; a handler
+   that waits 120s for an upstream the client abandoned at 30s leaves the worker
+   serving that session busy long after anyone is listening for the answer.
+2. Also set a default on a module-level client. MCP-004 matches the call site,
+   so a client default does not discharge the rule by itself — but it is what
+   bounds the next handler someone adds to the server before review catches a
+   missing `timeout=`.
+3. Split connect from read (`httpx.Timeout(read, connect=...)`). An unreachable
+   host should fail in seconds; a legitimately slow report may need longer.
+4. Return the timeout as a structured result rather than letting it raise.
+   An exception crosses the MCP boundary as an opaque protocol error the
+   connecting model cannot branch on — that is MCP-006's concern
+   ([error_handling.md](error_handling.md)), and a timeout is exactly the case
+   where the model needs to know the call is worth retrying.
+5. Cap the response read. A timeout bounds how long a host may stall; it does
+   not bound how much a host that answers promptly and then drips forever may
+   send.
