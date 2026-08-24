@@ -92,3 +92,22 @@ assemble smoke test) gates every PR, and a `build-pdf` job renders and uploads t
 PDF artifact. The workflow checks out `trustabl-rules` into `.rules` and passes
 `--rules-repo .rules`. If `trustabl-rules` is private, set the `RULES_REPO_TOKEN`
 secret to a PAT with read access; for a public pack the default token suffices.
+
+## `check_links.py` — internal-link gate
+
+Resolves every relative markdown link in the repo, and every `#anchor` against
+the target file's real headings (GitHub slug rules). The rationale docs lean on
+cross-references — one doc carries a threat model and its siblings defer to it —
+so a dead link silently removes the half of the argument that was deferred away.
+`check_rulebook.py` cannot see this: it checks docs against the rule pack, not
+against each other.
+
+```bash
+python tools/check_links.py            # whole repo
+python tools/check_links.py --root .   # or an explicit root
+```
+
+Links inside fenced code blocks are skipped, so an illustrative path in the
+template guide is not mistaken for a real one. Exit code `0` = every link
+resolves, `1` = at least one does not. Runs in CI in the `consistency` job; it
+needs no `trustabl-rules` checkout.
