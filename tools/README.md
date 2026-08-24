@@ -58,9 +58,16 @@ rules users actually receive, so a polished PDF can never quietly go stale.
 
 1. **Coverage** — every rule in `trustabl-rules` has a rationale doc covering it.
 2. **Consistency** — each doc's front-matter `severity` / `confidence` / `scope`
-   matches the rule's YAML.
+   matches the rule's YAML, and so does the per-rule `### RULE-ID — … (Severity:
+   …, Confidence: …)` heading. The book may not claim a severity the engine does
+   not ship, in either the machine-readable copy or the one a reader sees.
 3. **Placement** — a rule is documented in the chapter (`category`/`topic`) where
-   it actually lives, and docs do not reference rules that no longer exist.
+   it actually lives, its `policy_id` matches the paired YAML's `policy.id`, and
+   docs do not reference rules that no longer exist.
+4. **Structure** — every doc carries the sections the template guide requires
+   (`What this policy covers`, `Rule-by-rule defense`, `What this policy does not
+   cover`, `Recommendations beyond the fix`). A doc that stops early tells a
+   reader what is wrong but not what to write instead.
 
 It reads the YAML front-matter required on every `docs/Policy/<category>/<topic>.md`
 (see [`docs/policy-rationale-doc-template-guide.md`](../docs/policy-rationale-doc-template-guide.md)).
