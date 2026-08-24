@@ -9,6 +9,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The PDF is this repo's product and is built only as a CI artifact, so
+  # without this there is no way to produce one without pushing a commit —
+  # including after a trustabl-rules change that the rulebook itself does not
+  # reflect in a diff.
+  workflow_dispatch:
 
 permissions:
   contents: read
