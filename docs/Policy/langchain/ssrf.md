@@ -50,7 +50,10 @@ model an arbitrary-URL fetch. A hand-rolled `requests.get(url)` inside a `@tool`
 reproduces that exposure without the explicit opt-in, so it reads as an ordinary
 tool while granting the same SSRF primitive. The model — or a prompt injection in
 content it already fetched — chooses the host (LLM06), reaching internal services
-and credential endpoints an external caller could not (LLM02).
+and credential endpoints an external caller could not (LLM02). Wiring those built-ins
+to an agent directly is covered at agent scope by LC-103
+([langchain/agent_safety.md](agent_safety.md)); the rules here cover the hand-rolled
+call inside a tool body.
 
 ---
 
