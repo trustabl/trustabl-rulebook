@@ -38,6 +38,11 @@ rules:
     confidence: 0.65
     scope: skill
     fix_type: config
+  - id: CSKILL-087
+    severity: low
+    confidence: 0.85
+    scope: skill
+    fix_type: config
 references: [LLM02, LLM05, LLM06, AST03]
 ---
 
@@ -45,16 +50,16 @@ references: [LLM02, LLM05, LLM06, AST03]
 
 **Policy ID:** `claude_skill_quality_text`  
 **File:** `claude_skill/skill_quality_text.yaml`  
-**Rules:** CSKILL-080, CSKILL-081, CSKILL-082, CSKILL-083, CSKILL-084, CSKILL-085, CSKILL-086  
-**Severities:** high, high, high, low, medium, low, medium  
-**Fix types:** config — all seven rules fix by editing `SKILL.md` prose (name, description, or body); none require a bundled-file or code change  
+**Rules:** CSKILL-080, CSKILL-081, CSKILL-082, CSKILL-083, CSKILL-084, CSKILL-085, CSKILL-086, CSKILL-087  
+**Severities:** high, high, high, low, medium, low, medium, low  
+**Fix types:** config — all eight rules fix by editing `SKILL.md` prose (name, description, or body); none require a bundled-file or code change  
 **References:** OWASP LLM Top 10:2025 — LLM02, LLM05, LLM06 · OWASP Agentic Skills Top 10 — AST03
 
 > This is the **second** `claude_skill` rule file. [`skill_safety.yaml`](skill_safety.md)
 > detects structural/config facts read directly off the parsed `SkillDef` —
 > tool grants, dynamic-context grammar, bundled-file contents. Every rule
 > here instead runs a free-text keyword or phrase search over the skill's
-> `name`, `description`, or `body` string. None of these seven rules read
+> `name`, `description`, or `body` string. None of these eight rules read
 > bundled files, and — except CSKILL-082 — none read `allowed-tools` either.
 > Detection and threat model are both different; hence a separate file and a
 > separate doc, not an addendum to `skill_safety.md`.
@@ -63,7 +68,7 @@ references: [LLM02, LLM05, LLM06, AST03]
 
 ## What this policy covers
 
-Seven quality and data-governance rules over Claude Code Agent Skills
+Eight quality and data-governance rules over Claude Code Agent Skills
 (`SKILL.md`), each implemented as a case-insensitive **substring** search
 (`strings.Contains`, not a word-boundary regex) via one of three predicates —
 `skill_name_has_text`, `skill_description_has_text`, `skill_body_has_text` —
@@ -79,7 +84,7 @@ field and fire independent of the surrounding codebase.
 
 ## Why this policy spans three distinct risk categories
 
-Unlike a single-threat-model policy, this file's seven rules split cleanly
+Unlike a single-threat-model policy, this file's eight rules split cleanly
 into three unrelated concerns. Forcing them into one narrative would misstate
 at least two of the three, so this section treats them separately.
 
@@ -110,15 +115,19 @@ variant, keyed on role-implying language in the name rather than an explicit
 read-only claim in the description.
 
 **3. Reliability and data-governance hygiene (CSKILL-083, CSKILL-084,
-CSKILL-085, CSKILL-086).** These four rules are not attacks; they are
+CSKILL-085, CSKILL-086, CSKILL-087).** These five rules are not attacks; they are
 documentation gaps that degrade how predictably a skill behaves. A skill with
 no error-handling language gives Claude no guidance on the unhappy path
 (**LLM05, Improper Output Handling** — the same category `google_adk`'s and
 `claude_sdk`'s error-handling rules cite, extended here to skill *prose*
 rather than tool *code*). A skill with no stated purpose gives a reviewer
-nothing to weigh its access against. A skill that implies it writes,
+nothing to weigh its access against. A skill whose description is a
+placeholder stub (`TODO`, `TBD`, `FIXME`) passes CSKILL-070's empty check
+while still giving Claude no model-invocation signal — the same selection
+failure CSDK-017 names for tool docstrings, applied here to `SKILL.md`
+frontmatter. A skill that implies it writes,
 caches, or logs data with no retention statement leaves that data's
-lifetime undefined. None of these four map cleanly to a single OWASP
+lifetime undefined. None of these five map cleanly to a single OWASP
 LLM Top 10 category — CSKILL-085 in particular is pure documentation
 hygiene with no external taxonomy hook — and this doc says so rather than
 forcing a citation that wouldn't survive scrutiny.
@@ -410,6 +419,51 @@ these ten strings — "keep a copy," "write the results out," "maintain a
 history of runs" — evades the list entirely; `write to` is listed as an
 exact two-word phrase, so "write the results out" doesn't match it.
 
+### CSKILL-087 — Skill description is a placeholder (Severity: low, Confidence: 0.85, Fix type: config)
+
+**What we detect:** `skill_description_has_text` matches any of `todo`,
+`tbd`, `fixme`, `placeholder`, `no description`, `does stuff` — a
+case-insensitive substring search of the skill's `description` field
+only. The name and body are never scanned. An empty description does not
+match (CSKILL-070 in `skill_safety.yaml` covers that case).
+
+**Why it is flaggable:** Claude Code always loads the skill description
+into context and uses it as the primary signal for model-invocation —
+whether Claude should auto-load the skill when it judges it relevant.
+A stub that passes CSKILL-070 because *some* text is present still
+gives the model nothing to select on and a reviewer nothing to weigh
+the skill's `allowed-tools` against. That is the same selection-signal
+failure CSDK-017 names for a tool docstring that reads
+`"TODO: describe this tool"`, applied here to `SKILL.md` frontmatter.
+
+**Real-world consequence:** A skill checked into a shared plugin with
+`description: "TODO: fill this in"` is discoverable and model-invocable.
+Claude treats the stub as the skill's entire selection signal, so it
+either never auto-invokes a skill that would have been the right one,
+or invokes it for the wrong job because the only remaining cue is the
+directory name. A reviewer scanning `allowed-tools` has no stated
+purpose against which to judge the grants.
+
+**Why low and not medium:** A placeholder is a documentation gap, not
+executed behavior. The skill's body and bundled scripts can still be
+correct; the miss is that the field Claude and reviewers actually read
+first is a stub. Not medium because the empty-description case
+(CSKILL-070) is already the stronger signal, and this rule only fires
+when *some* text is present.
+
+**Fix type — config:** Replace the placeholder in the `description:`
+frontmatter field — no source or bundled-file change needed.
+
+**Confidence 0.85:** The six needles are the same closed list CSDK-017
+uses, and they are uncommon as incidental English except `todo`, which
+is a substring of `todos` / `todolist` — a description that says
+"manages the user's todos" trips this rule with no placeholder intent.
+`tbd`, `fixme`, `placeholder`, `no description`, and `does stuff` are
+narrower. **False negatives:** a stub phrased outside the list
+("coming soon", "WIP", "xxx", "fill me in", a single emoji) evades
+the match entirely while remaining equally useless as a selection
+signal.
+
 ---
 
 ## What this policy does not cover
@@ -427,13 +481,14 @@ exact two-word phrase, so "write the results out" doesn't match it.
   `assign` / `signal` (CSKILL-080), `secret` inside `secretary`
   (CSKILL-081), `audit` inside `auditorium` and `scan` inside `scanner`
   (CSKILL-082), `log` inside `catalog` / `dialog` / `logic` and `store`
-  inside `restore` (CSKILL-086).
+  inside `restore` (CSKILL-086), `todo` inside `todos` (CSKILL-087).
 - **Field asymmetry across rules.** CSKILL-080 scans name and description
   only, never body; CSKILL-084 and CSKILL-086 scan body only, never
-  description; a skill can pass any given rule simply by moving the
-  relevant language to a field that rule doesn't read.
+  description; CSKILL-087 scans description only, never name or body; a
+  skill can pass any given rule simply by moving the relevant language to
+  a field that rule doesn't read.
 - **Bundled-file content.** Unlike `skill_safety.yaml`'s CSKILL-010/011/030,
-  none of these seven rules read a bundled script or data file — a skill
+  none of these eight rules read a bundled script or data file — a skill
   whose `SKILL.md` prose is entirely clean while a bundled script performs
   the actual crypto, sensitive-data handling, or logging is invisible to
   this policy.
