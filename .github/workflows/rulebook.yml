@@ -21,6 +21,10 @@ jobs:
   consistency:
     name: Consistency (docs + index vs pack)
     runs-on: ubuntu-latest
+    # Published so build-pdf validates against the SAME ref this job resolved,
+    # rather than repeating the resolution and risking the two drifting apart.
+    outputs:
+      rules-ref: ${{ steps.rulesref.outputs.ref }}
     steps:
       - name: Checkout rulebook
         uses: actions/checkout@v4
@@ -79,30 +83,11 @@ jobs:
       - name: Checkout rulebook
         uses: actions/checkout@v4
 
-      # A coordinated rules change ships as paired PRs (one here, one in
-      # trustabl-rules). Validate this PR's docs against the matching production
-      # PR before either merges: check out trustabl-rules at a branch of the SAME
-      # name as this PR's head branch when it exists; otherwise fall back to main
-      # (push to main has an empty head_ref, so main always validates against the
-      # real production pack).
-      - name: Resolve trustabl-rules ref
-        id: rulesref
-        env:
-          RULES_TOKEN: ${{ secrets.RULES_REPO_TOKEN || github.token }}
-        run: |
-          ref="${{ github.head_ref }}"
-          if [ -n "$ref" ] && git ls-remote --exit-code --heads \
-              "https://x-access-token:${RULES_TOKEN}@github.com/trustabl/trustabl-rules.git" "$ref" >/dev/null 2>&1; then
-            echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          else
-            echo "ref=main" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Checkout trustabl-rules
         uses: actions/checkout@v4
         with:
           repository: trustabl/trustabl-rules
-          ref: ${{ steps.rulesref.outputs.ref }}
+          ref: ${{ needs.consistency.outputs.rules-ref }}
           path: .rules
           token: ${{ secrets.RULES_REPO_TOKEN || github.token }}
 
