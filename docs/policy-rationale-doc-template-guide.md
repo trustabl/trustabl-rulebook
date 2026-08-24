@@ -27,10 +27,10 @@ rules:                            # one entry per rule in the policy file
   - id: OAI-016
     severity: high               # MUST match the rule's YAML severity
     confidence: 0.6              # MUST match the rule's YAML confidence
-    scope: tool                  # MUST match the rule's YAML scope (required; one of tool|agent|subagent|repo)
+    scope: tool                  # MUST match the rule's YAML scope (required; one of tool|agent|subagent|repo|skill)
     fix_type: code               # editorial: config | code (see note below)
     hint_ids: [HINT-0006]        # optional: trustabl-hints entries this rule was synthesized from
-references: [LLM06, LLM02]        # OWASP LLM Top 10:2025 IDs
+references: [LLM06, LLM02]        # OWASP ids (see "Which taxonomies" below)
 ---
 ```
 
@@ -44,6 +44,26 @@ rule is documented in the wrong `category`/`topic` or no longer exists
 > *shape* (fix_type ∈ {config, code}) but cannot cross-check them against the
 > pack. Do not claim in prose that the engine prioritizes config fixes in scan
 > output until that field actually lands in the schema.
+
+### Which taxonomies `references` may cite
+
+`LLM01`–`LLM10` (OWASP LLM Top 10:2025) is the default and covers most rules.
+Agent- and skill-specific threats that the LLM Top 10 does not name have their
+own OWASP taxonomies, and rules may cite those instead of stretching an LLM id
+to fit:
+
+| Prefix | Taxonomy | Used by |
+|---|---|---|
+| `LLM01`–`LLM10` | OWASP LLM Top 10:2025 | every family |
+| `AST01`–`AST10` | OWASP Agentic Skills Top 10 | `claude_skill/` |
+| `ASI01`–`ASI…`  | OWASP Agentic Security Initiative | `claude_skill/` |
+
+Cite the id that actually names the threat. In the rendered header, group ids by
+taxonomy and name each one, as `claude_skill/skill_safety.md` does — a bare
+`AST03` is unresolvable for a reader who only knows the LLM Top 10.
+
+The gate does not validate these ids against any published list; it is on the
+author to cite one that exists.
 
 > **`hint_ids` is optional and shape-checked only.** Each entry must match
 > `HINT-NNNN`. The `trustabl-hints` repo is not checked out here, so the gate
@@ -65,7 +85,7 @@ Copy this verbatim. Fill every section. Delete no sections.
 **Rules:** <comma-separated rule IDs, e.g. CSDK-001, CSDK-002>  
 **Severities:** <comma-separated severities matching rule order>  
 **Fix types:** <comma-separated fix_type values matching rule order — `config` or `code`>  
-**References:** <comma-separated OWASP LLM Top 10:2025 IDs that anchor the rules in an external standard — e.g. LLM01, LLM06>
+**References:** <the same ids as the front-matter, grouped by taxonomy and named — e.g. `OWASP LLM Top 10:2025 — LLM01, LLM06 · OWASP Agentic Skills Top 10 — AST03`>
 
 ---
 
