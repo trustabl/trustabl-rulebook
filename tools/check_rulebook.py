@@ -10,8 +10,9 @@ It enforces four things:
 
   1. COVERAGE   — every rule in trustabl-rules has a rationale doc covering it.
   2. CONSISTENCY — each doc's front-matter (severity / confidence / scope) matches
-                   the rule's YAML. The book may not claim a severity the engine
-                   does not ship.
+                   the rule's YAML, and so does the per-rule heading a reader
+                   sees. The book may not claim a severity the engine does not
+                   ship, in either copy.
   3. PLACEMENT  — a rule is documented in the chapter (category/topic) where it
                    actually lives, and docs do not reference rules that no longer
                    exist.
@@ -297,6 +298,30 @@ def check(
                     f"{rel}: {rid} documented under topic {doc.topic!r} "
                     f"but the rule lives in {spec.topic!r} ({spec.source})"
                 )
+
+            # CONSISTENCY (rendered) — the per-rule heading a reader actually
+            # sees must agree with the pack too. The front-matter check above
+            # covers the machine-readable copy; this covers the human-readable
+            # one, which is what ends up in the PDF.
+            heading = re.search(
+                r"^###\s+" + re.escape(rid) + r"\s*[\u2014-]\s*.*?\(([^)]*)\)\s*$",
+                doc.body,
+                re.MULTILINE,
+            )
+            if heading:
+                meta = heading.group(1)
+                h_sev = re.search(r"Severity:\s*([A-Za-z]+)", meta)
+                h_conf = re.search(r"Confidence:\s*([0-9.]+)", meta)
+                if h_sev and h_sev.group(1).lower() != spec.severity:
+                    errors.append(
+                        f"{rel}: {rid} heading says severity "
+                        f"{h_sev.group(1).lower()!r} but the pack ships {spec.severity!r}"
+                    )
+                if h_conf and abs(float(h_conf.group(1)) - spec.confidence) > CONFIDENCE_TOLERANCE:
+                    errors.append(
+                        f"{rel}: {rid} heading says confidence "
+                        f"{h_conf.group(1)} but the pack ships {spec.confidence}"
+                    )
 
             # editorial field validation
             if dr.fix_type is not None and dr.fix_type not in VALID_FIX_TYPES:
