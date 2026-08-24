@@ -48,6 +48,16 @@ file read/write; confidence 0.7 because the param-is-pathish heuristic can flag 
 parameter that is not actually attacker-influenced, so the finding asks for
 confirmation that the parameter is caller-supplied.
 
+**Real-world consequence:** a documentation server exposes
+`read_doc(relative_path)` over a docs root and passes the parameter straight to
+`open()`. The model is summarizing a page that contains, in ordinary prose, an
+instruction to also read `../../.env` for configuration details. It calls the
+tool with that path, the handler opens it, and the file's contents are returned
+as the tool result — which is to say, into the conversation, and from there to
+whatever the client does with transcripts. The server's own credentials leave the
+host through a read-only documentation tool, and every audit log shows a
+successful `read_doc` call.
+
 **Fix type — code:** resolving the path and asserting an allowed root is a source
 edit to the handler.
 
