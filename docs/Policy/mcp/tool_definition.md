@@ -63,6 +63,11 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-029
+    severity: medium
+    confidence: 0.85
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -70,7 +75,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022, MCP-029  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -91,9 +96,9 @@ predicate `mcp_tool` kind) and the TypeScript `@modelcontextprotocol/sdk`
 community php-mcp/server) `#[McpTool]`-attributed methods. MCP-001/002/003 are
 the Python rules; MCP-011 is the TypeScript description rule; MCP-015/016 are the
 Go rules; MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules;
-MCP-019 (no description) and MCP-020 (ambiguous name) are the PHP rules; MCP-021
-(no description) and MCP-022 (ambiguous name) are the Rust rules (official rmcp
-crate, `#[tool]`-attributed methods).
+MCP-019 (no description), MCP-020 (ambiguous name), and MCP-029 (untyped
+parameters) are the PHP rules; MCP-021 (no description) and MCP-022 (ambiguous
+name) are the Rust rules (official rmcp crate, `#[tool]`-attributed methods).
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
@@ -249,6 +254,39 @@ ambiguous name gives the model no intent signal and collides across servers in a
 shared session, and the cost is paid by every uncontrolled consumer of the
 published catalog.
 
+### MCP-029 — PHP MCP tool has no type-annotated parameters (Severity: medium, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a `#[McpTool]`-attributed PHP method that has parameters but
+no type hints (`has_params: true` and `has_typed_params: false`). Discovery sets
+`HasTypedParams` when any `simple_parameter` carries a type field; PHP type
+hints are optional, so an untyped `function search($query, $limit)` is a real
+signal, unlike Go / C# / Rust where the analogous rule would never fire.
+
+**Why it is flaggable:** MCP derives the published input JSON schema from those
+type hints. Without them the advertised schema is unconstrained, so connecting
+models send inputs the handler cannot rely on and runtime errors surface inside
+the server — the same mechanism as
+[MCP-002](#mcp-002--tool-has-no-type-annotated-parameters-severity-medium-confidence-085-fix-type-code)
+on Python. Medium severity: degraded validation is a reliability and minor
+injection-surface concern (LLM06: the model can pass anything), not a direct
+compromise. Confidence 0.85 matches MCP-002: a tool that validates by hand
+inside the body, or that publishes a schema some other way, still fires because
+the predicate cannot see that.
+
+**Real-world consequence:** `#[McpTool(name: 'refund')] public function refund($id, $cents)`
+advertises two unconstrained arguments. A connected model (or a prompt-injected
+client) sends `$cents = "all"` or an array; the handler fatals or refunds the
+wrong amount, and the opaque PHP error crosses the MCP trust boundary.
+
+**Why severity is medium and not high:** missing types degrade the contract; they
+do not by themselves grant shell or network. Not low: every consumer of the
+server inherits the unconstrained schema. **Fix type — code:** adding `string
+$id, int $cents` is a source edit. **Confidence 0.85:** residual false positives
+are a handler that constrains inputs without hints (runtime `is_int` checks, a
+separately-published schema) and mixed-hint signatures where *any* typed
+parameter makes discovery report `HasTypedParams=true` (so a `$query` plus
+`int $limit` is silent).
+
 ---
 
 ## What this policy does not cover
@@ -267,10 +305,10 @@ untyped-params likewise has no analog (C# is statically typed), the
 plus the Semantic Kernel `[KernelFunction]` / AutoGen `[Function]` shapes await
 later work. For PHP, the multi-line `#[...]` attribute form is not read (the
 grammar parses single-line attributes as comments), `#[McpResource]` /
-`#[McpPrompt]` are not discovered, and body-fact rules await PHP AST predicates;
-unlike Go and C#, PHP type hints are optional, so an untyped-params analog of
-MCP-002 *is* meaningful — discovery already captures `HasTypedParams`, and that
-rule is a deliberate fast-follow rather than not applicable. For Rust,
+`#[McpPrompt]` are not discovered, and body-fact rules await PHP AST predicates.
+MCP-029 now covers the untyped-params analog of MCP-002; it still cannot see
+mixed-hint signatures (one typed parameter silences the rule) or a schema
+published outside the method signature. For Rust,
 untyped-params has no analog (Rust is statically typed, and the input schema lives
 in a separate `#[derive(JsonSchema)]` struct passed via `Parameters<T>`, which is
 not yet resolved); raw-string descriptions, `#[tool]` on free functions outside an
