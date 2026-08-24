@@ -34,11 +34,11 @@ capability rules **VAI-001** (subprocess), **VAI-002** (eval / `new Function`),
 and write-path checks: those flag the dangerous operation; VAI-013 flags the
 missing checkpoint around it.
 
-SDK 7 deprecated `needsApproval` on individual tool definitions in favor of
-`toolApproval` on `generateText`, `streamText`, or `ToolLoopAgent`. Existing
-code still works, but new applications should configure approval at the call or
-agent level. VAI-013 targets the legacy tool-level gate because it remains in
-production codebases and defaults to un-gated execution when omitted.
+SDK 7 moved approval from individual tool definitions to `toolApproval` on
+`generateText`, `streamText`, or `ToolLoopAgent`. VAI-013 inspects only the
+tool-level `needsApproval` option. It cannot yet verify a separate SDK 7 call
+or agent-level `toolApproval` configuration, so such code may need manual
+review after this rule fires.
 
 Official references:
 
@@ -66,9 +66,8 @@ OWASP LLM06 (Excessive Agency) in its most literal form: the agent can take a
 high-impact action with no human in the loop.
 
 The fix is *config*: `needsApproval` is a tool-options keyword, set without
-changing `execute()` logic. For SDK 7+, the equivalent is `toolApproval` on the
-generation call or agent — approval policy lives with the app developer, not
-only the tool author.
+changing `execute()` logic. SDK 7 uses `toolApproval` on the generation call or
+agent, but Trustabl does not yet correlate that setting with an individual tool.
 
 ---
 
@@ -99,15 +98,15 @@ amplifiers and hygiene; an absent approval gate on shell/code/write is a direct
 path from prompt injection to execution.
 
 **Fix type — config:** add `needsApproval: true` (or a per-call approval
-function) and handle approval requests in the agent loop, or configure
-`toolApproval` on `generateText` / `streamText` / `ToolLoopAgent` for SDK 7+.
+function) and handle approval requests in the agent loop. SDK 7 uses
+`toolApproval` on `generateText` / `streamText` / `ToolLoopAgent`, but that
+separate configuration is outside this rule's current detection surface.
 
-**Confidence 0.7:** a tool may be deliberately auto-approved behind agent-level
-`toolApproval`, input validation, or a sandbox the tool-local check cannot see —
-hence 0.7 rather than higher. Callback-based approval (`needsApproval: async
-(...) => ...`) is treated as a gate when present; external middleware that
-intercepts tool calls without setting `needsApproval` or `toolApproval` is
-invisible to this rule.
+**Confidence 0.7:** a tool may be deliberately protected by SDK 7 call or
+agent-level `toolApproval`, input validation, or a sandbox that this tool-local
+check cannot see. Callback-based approval (`needsApproval: async (...) => ...`)
+is treated as a gate when present; external middleware is also invisible to this
+rule.
 
 ---
 
@@ -181,7 +180,7 @@ export const deleteFile = tool({
 A non-literal approval function counts as a gate; the scanner treats any present
 `needsApproval` kwarg that is not the literal `false` as opted in.
 
-### Safe — SDK 7 toolApproval at call level (silent for tool-level rule)
+### SDK 7 toolApproval at call level (known limitation)
 
 ```typescript
 const deleteFile = tool({
@@ -202,9 +201,10 @@ await streamText({
 });
 ```
 
-This pattern moves approval off the tool definition. VAI-013 does not fire
-because there is no un-gated `needsApproval: false` on the tool itself.
-Agent-level `toolApproval` coverage is a separate rule surface for future work.
+This pattern moves approval off the tool definition. VAI-013 can still fire
+because the tool has no `needsApproval` option and the rule cannot see the
+separate `toolApproval` configuration. Treat this as a manual-review finding
+until Trustabl adds call or agent-level approval correlation.
 
 ---
 
@@ -223,15 +223,16 @@ designs in AGENTS.md and pair them with agent-level tests.
 
 **SDK 7 migration:** `needsApproval` on `tool()` is deprecated. Prefer
 `toolApproval` on `generateText`, `streamText`, or `ToolLoopAgent` so approval
-policy can vary per request. See the [7.0 migration guide](https://ai-sdk.dev/docs/migration-guides/migration-guide-7-0).
+policy can vary per request. VAI-013 cannot verify that setting yet, so record
+the result as a known limitation. See the [7.0 migration guide](https://ai-sdk.dev/docs/migration-guides/migration-guide-7-0).
 
 ---
 
 ## What this policy does not cover
 
 - Tools made safe by `toolApproval` at the agent/call level without
-  `needsApproval` on the tool — deliberate SDK 7 pattern; this rule reads tool
-  options only.
+  `needsApproval` on the tool. This deliberate SDK 7 pattern can still produce
+  a finding because the rule reads tool options only.
 - Privileged operations performed through libraries the capability predicates do
   not match (async spawn wrappers, non-listed write APIs).
 - Whether an approval handler actually presents the action meaningfully to a
@@ -270,9 +271,10 @@ await streamText({
 });
 ```
 
-1. Set `needsApproval: true` (or SDK 7 `toolApproval`) on every tool that runs
-   commands, executes code, or mutates state, and implement approval handling in
-   your run loop or UI.
+1. Set `needsApproval: true` on every supported tool that runs commands,
+   executes code, or mutates state, and implement approval handling in your run
+   loop or UI. SDK 7 users should configure `toolApproval` and treat VAI-013 as
+   a known tool-level limitation until call-level detection exists.
 2. Where approval must be automated, replace the human gate with strict input
    validation and document why; do not rely on an implicit default.
 3. Run privileged tools in an isolated sandbox with no ambient credentials.
