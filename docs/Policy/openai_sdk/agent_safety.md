@@ -38,17 +38,22 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
-references: [LLM01, LLM06]
+  - id: OAI-112
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
+references: [LLM01, LLM06, LLM10]
 ---
 
 # Policy Rationale: Agent Wiring Safety
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110  
-**Severities:** high, high, high, medium, high, high, medium  
-**Fix types:** config, config, config, config, config, config, config  
-**References:** LLM01, LLM06
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110, OAI-112  
+**Severities:** high, high, high, medium, high, high, medium, low  
+**Fix types:** config, config, config, config, config, config, config, config  
+**References:** LLM01, LLM06, LLM10
 
 ---
 
@@ -62,7 +67,12 @@ tools), OAI-102 (`tool_use_behavior="stop_on_first_tool"`), OAI-103
 (`tool_choice="required"` + `reset_tool_choice=False`), OAI-104 (raw `Agent`, not
 `SandboxAgent`, with shell/filesystem tools), OAI-109 (`WebSearchTool` without
 `input_guardrails`), OAI-110 (a content-fetching hosted tool without
-`output_guardrails`).
+`output_guardrails`). A further rule, OAI-112, is different in kind: it does not
+read the constructor at all, but correlates this agent's construction site to the
+`Runner.run`/`run_sync`/`run_streamed` call(s) that execute it and fires when none
+of them sets `max_turns` — an execution-limit / reliability concern (LLM10,
+Unbounded Consumption), distinct from the prompt-injection and excessive-agency
+framing of the rules above it.
 
 ---
 
@@ -86,8 +96,26 @@ attacker-controlled tool output the final response with no model post-processing
 documented infinite-tool-loop footgun; a raw `Agent` instead of `SandboxAgent`
 (OAI-104) surfaces the host to privileged tools directly.
 
-All six fixes are *config* — guardrail lists, a kwarg, or a class swap on the agent
-constructor, not tool-code changes.
+A third line, independent of both, runs through OAI-112 alone and is not a threat
+to injected content or agent capability at all: it is an execution-limit /
+reliability concern (OWASP LLM10, Unbounded Consumption). The `Runner.run` family
+is what actually drives an agent's tool loop to completion, and if none of the
+calls that execute this agent sets `max_turns`, the run proceeds to whatever
+ceiling the SDK's own `DEFAULT_MAX_TURNS` applies rather than to a bound sized for
+the task. A model that loops or oscillates keeps consuming turns, tokens, and tool
+side effects — including from any of the tools OAI-101/104/109/110 are already
+screening — until that implicit ceiling intervenes, and the ceiling itself is an
+SDK implementation detail that can shift between releases with no change on the
+project's side. This is the same shape as CrewAI's CREW-110 (`max_iter`) and the
+Claude Agent SDK's CSDK-204 (`max_turns` on `ClaudeAgentOptions`): a generic
+default already bounds the worst case, so the risk is real but modest — which is
+why it sits at low severity.
+
+All six wiring fixes above are *config* — guardrail lists, a kwarg, or a class
+swap on the agent constructor, not tool-code changes. OAI-112's fix is config
+too, but at a different site: the `Runner.run(...)` call that executes the
+agent, not the `Agent(...)`/`SandboxAgent(...)` constructor — the first fix in
+this policy that reaches past the constructor to the call that actually runs it.
 
 ---
 
@@ -262,6 +290,68 @@ last line before the user/caller.
 are low-risk (public data, no sensitive egress), so the missing output guardrail is
 often acceptable — a review prompt more than a defect.
 
+### OAI-112 — OpenAI Agents SDK agent has no explicit max_turns limit (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:** this agent has at least one resolvable `Runner.run` /
+`run_sync` / `run_streamed` call that executes it — found by a second,
+independent discovery pass that matches the call's callee object to exactly
+`Runner` (or a dotted path ending in `.Runner`) and its first positional
+argument to this agent's `VarName`, in the same file — and none of those calls
+sets `max_turns` (predicate `agent_run_call_max_turns_missing`). Unlike every
+other rule in this policy, which reads kwargs off a single constructor call,
+OAI-112 correlates two separately discovered structures — the agent's
+`AgentDef` and one or more `AgentRunCallDef`s — by same-file variable name. A
+call whose first argument is not a plain identifier (a call expression, a
+keyword arg) is skipped as unresolvable, and an agent with no matching run
+call at all never fires: no resolvable execution site is not evidence that one
+is missing a cap.
+
+**Why it is flaggable:** with no `max_turns` on any call that runs it, the
+agent's loop runs to whatever ceiling the SDK's `DEFAULT_MAX_TURNS` applies
+rather than to a bound sized for this task. A model that loops or oscillates —
+retrying a failing tool, re-reading the same file, ping-ponging between two
+steps — keeps consuming turns, tokens, and tool side effects until that
+implicit ceiling is reached, and an implicit ceiling can shift between SDK
+versions without any change on your side.
+
+**Real-world consequence:** an agent wired with a flaky tool is run via
+`Runner.run(agent, user_input)` with no `max_turns`; a transient failure sends
+it into a retry-and-fail loop that burns turns, tokens, and tool side effects
+until the SDK's own default finally intervenes — a slow, silent cost overrun
+rather than a clean stop at a bound the team chose.
+
+**Why severity is low and not medium:** the SDK's own `DEFAULT_MAX_TURNS`
+bounds the worst case, so this is not an unbounded-loop finding — it is a
+missing *explicit, task-sized* bound. That places it alongside CrewAI's
+CREW-110 (`max_iter`) and the Claude Agent SDK's CSDK-204 (`max_turns` on
+`ClaudeAgentOptions`): a generic ceiling already limits the damage, so the
+finding is real but modest.
+
+**Fix type — config:** pass `max_turns=` to `Runner.run(...)` (or
+`run_sync`/`run_streamed`), sized to the work this agent actually does. Unlike
+every other fix in this policy, this one is not a constructor kwarg — it lands
+on the call that executes the agent, a different site entirely. Treat hitting
+the cap as a signal to surface and handle rather than to raise it: if a task
+legitimately needs many turns, split it into bounded sub-runs instead of
+removing the bound.
+
+**Confidence 0.6:** lower than every kwarg-presence/absence rule above because
+the predicate does something none of them do — it correlates two separately
+discovered structures, `AgentDef` and `AgentRunCallDef`, by same-file variable
+name, rather than reading kwargs off one call. That correlation has two real
+gaps. Cross-file correlation is not attempted at all: an agent constructed in
+one file and run via `Runner.run(...)` in another is invisible to this rule
+and never fires — a false negative the rule does not attempt to close. And
+because the check only asks whether *any* matching run call sets `max_turns`,
+an agent run multiple times with inconsistent settings — one call sizing
+`max_turns`, another leaving it off — goes completely silent on the strength
+of the one compliant call, even though the uncapped call still executes the
+same agent unbounded. The remaining gaps mirror CSDK-204's own 0.6: a call
+built with `**` unpacking is skipped as unresolvable (`Opaque: true`), a cap
+enforced by a wrapper or retry harness outside the call itself is invisible,
+and a `max_turns` value passed via a variable the scanner cannot resolve to a
+literal reads as absent.
+
 ---
 
 ## What this policy does not cover
@@ -281,13 +371,22 @@ often acceptable — a review prompt more than a defect.
   tool wired through a non-literal value is a false negative; and an
   `inputGuardrails` list built from a non-literal value reads as empty even when a
   guardrail is present (false positive).
+- For OAI-112: an agent constructed in one file and executed via
+  `Runner.run(...)` in another — the `AgentDef`-to-`AgentRunCallDef`
+  correlation is same-file-VarName only, so a cross-file execution site is
+  invisible and the rule stays silent. An agent run multiple times where only
+  one call sets `max_turns` also escapes detection: any single matching call
+  that sets it silences the finding entirely, even if other calls that execute
+  the same agent leave it uncapped. The SDK's actual `DEFAULT_MAX_TURNS`
+  behavior is not independently verified for this doc beyond the language
+  already present in the shipped rule's own explanation text.
 
 ---
 
 ## Recommendations beyond the fix
 
 ```python
-from agents import Agent, SandboxAgent, input_guardrail, output_guardrail
+from agents import Agent, SandboxAgent, Runner, input_guardrail, output_guardrail
 
 agent = SandboxAgent(
     name="research",
@@ -296,6 +395,8 @@ agent = SandboxAgent(
     output_guardrails=[screen_final_output],  # OAI-110
     # no stop_on_first_tool; tool_choice left "auto"  -> OAI-102/103
 )
+
+result = Runner.run_sync(agent, user_input, max_turns=8)  # OAI-112: sized to this agent's task
 ```
 
 1. Wire both `input_guardrails` and `output_guardrails` on any agent that touches
@@ -305,3 +406,6 @@ agent = SandboxAgent(
    deterministically terminates the loop.
 3. Prefer `SandboxAgent` with a restrictive `Manifest` for any agent holding
    shell/filesystem tools, and screen handoff targets for at-least-equal guarding.
+4. Pass `max_turns=` on whichever `Runner.run`/`run_sync`/`run_streamed` call
+   executes the agent, sized to the task rather than left at the SDK default,
+   and keep it consistent across every call site that runs the same agent.

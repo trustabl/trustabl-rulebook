@@ -23,6 +23,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: PYD-106
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
 references: [LLM05, LLM06, LLM10]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM05, LLM06, LLM10]
 
 **Policy ID:** `pydantic_ai_agent_safety`  
 **File:** `pydantic_ai/agent_safety.yaml`  
-**Rules:** PYD-101, PYD-102, PYD-103, PYD-105  
-**Severities:** low, high, medium, low  
-**Fix types:** config, config, config, config  
+**Rules:** PYD-101, PYD-102, PYD-103, PYD-105, PYD-106  
+**Severities:** low, high, medium, low, low  
+**Fix types:** config, config, config, config, config  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -47,7 +52,12 @@ type — `output_type` is absent (defaulting to `str`) or set explicitly to `str
 `agent_uses_hosted_tool_class`). **PYD-103** fires when the agent wires a native
 web-retrieval tool — `WebFetchTool`, `UrlContextTool`, or `WebSearchTool` (same
 predicate). **PYD-105** fires when `end_strategy="exhaustive"` (predicate
-`agent_kwarg_value`).
+`agent_kwarg_value`). **PYD-106** is different in kind from the four above: it
+does not read the constructor at all, but correlates this agent's construction
+site to the `run`/`run_sync`/`run_stream` call(s) that execute it and fires
+when none of them sets `usage_limits` — an execution-limit / cost concern
+(LLM10, Unbounded Consumption), distinct from the output-validation and
+excessive-agency framing of the rules above it.
 
 ---
 
@@ -81,6 +91,21 @@ remaining calls anyway before ending, instead of returning immediately (the
 — exhaustive mode executes it even though the model already considered the task
 done, widening the blast radius of a run and making duplicate or unintended side
 effects more likely (an LLM06/LLM10 reliability edge).
+
+PYD-106 sits in the same LLM10 territory as PYD-105's reliability edge, but is
+architecturally different from every rule above it: none of PYD-101/102/103/105
+look past the `Agent(...)` constructor, while PYD-106 correlates this agent's
+construction to the call that actually runs it — `agent.run`/`run_sync`/
+`run_stream` — and asks whether any of those calls sets `usage_limits`. Left
+unset, Pydantic AI falls back to a bare `UsageLimits()`, which caps request
+count but leaves token and cost usage completely unbounded. A model that loops
+or oscillates, or a single run whose tool-calling chain balloons unexpectedly,
+can burn far more tokens and cost than the task warrants before the request
+cap is ever reached — nothing in the default stops a single expensive run from
+running the bill up. This is the Pydantic AI analogue of the OpenAI Agents
+SDK's OAI-112 (`max_turns`), CrewAI's CREW-110 (`max_iter`), and the Claude
+Agent SDK's CSDK-204 (`max_turns` on `ClaudeAgentOptions`): a missing explicit,
+task-sized execution bound, not a capability grant.
 
 ---
 
@@ -181,6 +206,69 @@ constructor change. **Confidence 0.7:** the rule cannot tell whether the agent's
 tools have side effects, so it over-flags exhaustive-mode agents whose tools are
 all read-only.
 
+### PYD-106 — Pydantic AI agent has no explicit usage_limits set (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:** this agent has at least one resolvable `<agent>.run` /
+`run_sync` / `run_stream` call that executes it — found by a second,
+independent discovery pass that matches the call's method **receiver**
+identifier to this agent's `VarName`, in the same file — and none of those
+calls sets `usage_limits` (predicate
+`agent_run_call_usage_limits_missing`). Like OAI-112, this correlates two
+separately discovered structures — the agent's `AgentDef` and one or more
+`AgentRunCallDef`s — by same-file variable name, rather than reading kwargs
+off a single constructor call as PYD-101/102/103/105 do. Pydantic AI has no
+fixed "Runner" class the way the OpenAI Agents SDK does, so the discoverer
+treats any `<identifier>.run(...)`/`run_sync(...)`/`run_stream(...)` in a file
+that imports Pydantic AI as a candidate call; over-capturing here is safe
+because a receiver name that does not correspond to any discovered agent in
+the same file simply never correlates to a finding. A call whose receiver is
+not a plain identifier is skipped, and an agent with no matching run call at
+all never fires.
+
+**Why it is flaggable:** with no `usage_limits` on any call that runs it, the
+agent falls back to a bare `UsageLimits()` — capping request count but leaving
+token and cost usage completely unbounded. A model that loops or oscillates,
+or a single run that balloons into an unexpectedly long tool-calling chain,
+can burn far more tokens and cost than the task warrants before the request
+cap is ever reached, and nothing stops a single expensive run from running the
+bill up.
+
+**Real-world consequence:** an agent is run via `agent.run_sync(user_input)`
+with no `usage_limits`; a tool that returns increasingly large context on each
+retry drives the run's token spend far past what the task justifies, with only
+the bare request cap left to eventually stop it — a silent cost overrun rather
+than a clean, observable `UsageLimitExceeded`.
+
+**Why severity is low and not medium:** the default `UsageLimits()` still caps
+request count, so this is not a fully unbounded run — it is a missing
+*explicit, task-sized* bound on token and cost spend specifically. That places
+it alongside OAI-112, CREW-110, and CSDK-204: a generic partial ceiling
+already limits part of the damage, so the finding is real but modest.
+
+**Fix type — config:** pass `usage_limits=UsageLimits(...)` to
+`agent.run`/`run_sync`/`run_stream`, sized to the task — `request_limit` for a
+hard step count, and `total_tokens_limit` or
+`input_tokens_limit`/`output_tokens_limit` to bound token spend directly. Like
+OAI-112, this fix lands on the call that executes the agent, not the
+`Agent(...)` constructor — the only rule in this policy that reaches past the
+constructor. Treat hitting the limit as a signal to surface and handle rather
+than to raise it.
+
+**Confidence 0.6:** lower than PYD-101/102/103/105 because the predicate
+correlates two separately discovered structures — `AgentDef` and
+`AgentRunCallDef` — by same-file variable name, instead of reading kwargs off
+one constructor call. Cross-file correlation is not attempted: an agent
+constructed in one file and run via `.run(...)` in another is invisible to
+this rule and never fires — a false negative the rule does not attempt to
+close. And because the check only asks whether *any* matching run call sets
+`usage_limits`, an agent run multiple times with inconsistent settings goes
+silent on the strength of a single compliant call, even though another call
+that executes the same agent may leave usage completely unbounded. The
+remaining gaps mirror CSDK-204's own 0.6: a call built with `**` unpacking is
+skipped as unresolvable (`Opaque: true`), a cap enforced by a wrapper or retry
+harness outside the call itself is invisible, and a `usage_limits` value
+passed via a variable the scanner cannot resolve to a literal reads as absent.
+
 ---
 
 ## What this policy does not cover
@@ -197,6 +285,16 @@ all read-only.
 - A native tool referenced under an alias, or a provider tool outside the listed
   class set, may escape the class-name match. Whether a native tool's execution or
   fetch environment is sandboxed is not visible to the match.
+- For PYD-106: an agent constructed in one file and executed via `.run(...)` in
+  another — the `AgentDef`-to-`AgentRunCallDef` correlation is same-file-VarName
+  only, so a cross-file execution site is invisible and the rule stays silent.
+  An agent run multiple times where only one call sets `usage_limits` also
+  escapes detection: any single matching call that sets it silences the
+  finding entirely, even if other calls that execute the same agent leave
+  usage unbounded. Pydantic AI's default `UsageLimits()` `request_limit` value
+  is not independently verified or asserted as a specific number in this doc,
+  beyond the language already present in the shipped rule's own explanation
+  text.
 
 ---
 
@@ -205,6 +303,7 @@ all read-only.
 ```python
 from pydantic import BaseModel
 from pydantic_ai import Agent
+from pydantic_ai.usage import UsageLimits
 
 class Decision(BaseModel):
     approved: bool
@@ -216,6 +315,11 @@ agent = Agent(
     output_type=Decision,        # framework validates & re-prompts on failure
     end_strategy="early",        # skip pending tool calls once a result is final
     tools=[vetted_lookup],       # no CodeExecutionTool / WebFetchTool
+)
+
+result = agent.run_sync(
+    user_input,
+    usage_limits=UsageLimits(request_limit=10, total_tokens_limit=20_000),  # PYD-106
 )
 ```
 
@@ -231,3 +335,6 @@ agent = Agent(
    purpose-built fetcher over an open one.
 4. Leave `end_strategy` at `early` unless every callable tool is side-effect-free
    and you specifically need the remaining calls to complete.
+5. Pass `usage_limits=UsageLimits(...)` sized to the task on whichever
+   `run`/`run_sync`/`run_stream` call executes the agent, and keep it
+   consistent across every call site that runs the same agent.
