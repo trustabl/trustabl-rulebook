@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -118,8 +119,21 @@ def build(repo: Path, rules_repo: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Assemble the rulebook into one markdown for Pandoc.")
-    ap.add_argument("--rules-repo", default="../trustabl-rules")
-    ap.add_argument("--out", default="build/trustabl-rulebook.md")
+    # Same resolution as check_rulebook.py and gen_index.py: the env var is how
+    # `make book` is pointed at a non-sibling pack, and all three steps of that
+    # pipeline have to agree about which pack they are reading.
+    default_rules = os.environ.get("TRUSTABL_RULES_REPO", "../trustabl-rules")
+    ap.add_argument(
+        "--rules-repo",
+        default=default_rules,
+        help="path to the trustabl-rules checkout "
+             "(default: %(default)s, or $TRUSTABL_RULES_REPO)",
+    )
+    ap.add_argument(
+        "--out",
+        default="build/trustabl-rulebook.md",
+        help="where to write the assembled markdown (default: %(default)s)",
+    )
     args = ap.parse_args()
 
     repo = Path(__file__).resolve().parent.parent
