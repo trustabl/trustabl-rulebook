@@ -47,6 +47,15 @@ an irreversible side effect with no replay guard. Medium severity, and confidenc
 idempotent, and a mutating tool with a non-obvious name is missed. The finding is
 a prompt to confirm, not a proof.
 
+**Real-world consequence:** a `refund_charge(charge_id, amount_cents)` tool takes
+45 seconds because the payment provider is slow. The connecting client gives up
+at 30 and, having no way to distinguish "did not happen" from "happened but the
+answer was lost", retries. The provider issues a second refund. The customer is
+paid twice, both refunds are legitimate as far as every system involved is
+concerned, and nothing surfaces it until reconciliation days later. No component
+malfunctioned: the tool did exactly what it was asked, twice, because nothing in
+the call let the second request identify itself as the first one again.
+
 **Fix type — code:** accepting an idempotency key and de-duplicating server-side
 is a source edit.
 
