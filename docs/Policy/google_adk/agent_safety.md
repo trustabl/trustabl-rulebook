@@ -267,7 +267,10 @@ kwarg lookup and reads as absent — a false negative. And the rule only checks 
 filter is *declared*, not what the server actually exposes: an MCP server that the
 operator has already scoped to a minimal, safe tool set looks identical, from the client
 source, to one exposing a dangerous unbounded catalog — a false positive this rule cannot
-resolve from the client side.
+resolve from the client side. A third gap sits alongside these: the predicate checks
+whether the `tool_filter` kwarg is *present*, not what it evaluates to — an explicit
+`tool_filter=None` or `tool_filter=[]` reads as present and satisfies the rule, even
+though neither value actually narrows the tool catalog.
 
 ---
 
