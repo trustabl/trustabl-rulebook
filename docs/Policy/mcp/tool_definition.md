@@ -109,6 +109,25 @@ routes on the published metadata; that metadata is the entire contract.
 
 ## Rule-by-rule defense
 
+**Why this policy is scored low.** Every rule here except MCP-002 is low
+severity, and that is deliberate rather than an oversight repeated eleven times.
+A missing description or an ambiguous name degrades *selection*, not safety: the
+tool still does exactly what it did, nothing new becomes reachable, and no
+attacker gains a primitive. What is lost is the model's ability to choose
+correctly — wrong-tool calls, skipped calls, wasted turns — which is a cost paid
+in reliability.
+
+Two things stop it being scored lower still. The cost lands on people who did not
+write the tool: an MCP server publishes its catalog to clients its author does
+not control, so a bad name is a defect exported to every session that mounts it.
+And a definition is the one thing a connecting model cannot inspect its way
+around — it has the name, the description, and the schema, and nothing else.
+
+MCP-002 is medium because it is the only rule in the policy that weakens a
+*boundary* rather than a signal: the published schema is what constrains the
+input a handler receives, and an unconstrained schema pushes validation into the
+handler body, where it is easy to omit.
+
 ### MCP-001 — Tool has no description (Severity: low, Confidence: 0.9, Fix type: code)
 
 **What we detect:** an MCP tool registration whose Python handler has no
@@ -134,6 +153,13 @@ so connecting models send inputs the handler cannot rely on and runtime errors
 surface inside the server. Medium severity: degraded validation is a
 reliability and minor injection-surface concern, not a direct compromise.
 
+**Confidence 0.85:** the predicate reads the signature, so it is right about what
+it saw — the residual gap is a handler that publishes a schema some other way,
+such as one typed argument carrying a Pydantic model while the remaining
+parameters stay bare, which still fires. It does not fire on a handler that takes
+no parameters at all (`has_params` gates it), so the common no-argument tool is
+not swept up.
+
 ### MCP-003 — Ambiguous tool name (Severity: low, Confidence: 0.85, Fix type: code)
 
 **What we detect:** a tool named from a fixed ambiguous set (`process`,
@@ -142,6 +168,13 @@ reliability and minor injection-surface concern, not a direct compromise.
 **Why it is flaggable:** an ambiguous name gives the model no intent signal and
 collides across servers in a shared session. Because an MCP server's consumers
 are not controlled by the author, the cost is paid everywhere it is mounted.
+
+**Confidence 0.85:** the match is exact against a closed list, so a finding is
+never a misreading — the 0.15 is for the case where the name is genuinely
+unambiguous in context, a single-purpose server whose own name supplies the noun.
+The far larger gap is recall, not precision: `search`, `update`, and `get` are
+just as ambiguous in a merged catalog and are not on the list. A clean scan means
+the tool avoided ten specific words, not that its name is good.
 
 ### MCP-011 — TypeScript MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
@@ -178,6 +211,12 @@ ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
 no intent signal and collides across servers in a shared session, and the cost is
 paid by every uncontrolled consumer of the published catalog.
 
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the Go list holds nine names, not MCP-003's
+ten: `go` is omitted, since it is far more likely to be an ordinary word here
+than an ambiguous tool name.
+
 ### MCP-017 — C# MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
 **What we detect:** an `[McpServerTool]`-attributed C# method with no co-located
@@ -197,6 +236,12 @@ SDK default) is in the fixed ambiguous set (`process`, `handle`, `run`, ...) via
 
 **Why it is flaggable:** identical to MCP-003 / MCP-016 — an ambiguous name gives
 the model no intent signal and collides across servers in a shared session.
+
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the C# list holds nine names, not MCP-003's
+ten: `go` is omitted, since it is far more likely to be an ordinary word here
+than an ambiguous tool name.
 
 ### MCP-019 — PHP MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
@@ -223,6 +268,12 @@ name gives the model no intent signal and collides across servers in a shared
 session, and the cost is paid by every uncontrolled consumer of the published
 catalog.
 
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the PHP list holds nine names, not
+MCP-003's ten: `go` is omitted, since it is far more likely to be an ordinary
+word here than an ambiguous tool name.
+
 ### MCP-021 — Rust MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
 **What we detect:** a `#[tool]`-attributed Rust method (official rmcp crate) with
@@ -248,6 +299,12 @@ ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
 ambiguous name gives the model no intent signal and collides across servers in a
 shared session, and the cost is paid by every uncontrolled consumer of the
 published catalog.
+
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the Rust list holds nine names, not
+MCP-003's ten: `go` is omitted, since it is far more likely to be an ordinary
+word here than an ambiguous tool name.
 
 ---
 
