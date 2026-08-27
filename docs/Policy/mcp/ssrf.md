@@ -60,6 +60,14 @@ pivot) is severe, so severity is high; confidence is 0.6 because "non-literal
 URL" includes benign cases where the dynamic part is a fixed-base path segment,
 and the rule cannot prove the value is attacker-reachable.
 
+**Real-world consequence:** a summarizing server runs in a VPC and exposes
+`fetch_page(url)`. A document in the conversation instructs the model to fetch
+`http://169.254.169.254/latest/meta-data/iam/security-credentials/`. The handler
+does, because that is its job, and returns the body as the tool result — the
+instance's role credentials, delivered into the conversation. The attacker never
+needed access to the VPC; they needed the server to make one request on their
+behalf, from a network position they do not have and the server does.
+
 ### MCP-013 — TypeScript MCP tool fetches a caller-controlled URL (SSRF) (Severity: high, Confidence: 0.6, Fix type: code)
 
 **What we detect:** the same pattern in a TypeScript handler — a `fetch`/`axios`/
@@ -68,6 +76,12 @@ concatenation rather than a string literal (captured `dynamic_url` fact).
 
 **Why high / 0.6:** identical mechanism and calibration to MCP-008 on the
 TypeScript SDK; a plain string-literal URL does not fire.
+
+**Real-world consequence:** identical to MCP-008, with one TypeScript-specific
+path in. `fetch` follows redirects by default, so a handler that allow-lists the
+host it is given still reaches the metadata endpoint if the allowed host answers
+with a 302 pointing at it. The check ran, passed, and protected nothing —
+`redirect: "manual"` is what closes it.
 
 ---
 
