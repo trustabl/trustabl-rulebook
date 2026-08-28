@@ -13,11 +13,11 @@ references: [LLM06]
 
 # Policy Rationale: Vercel AI SDK Tool Approval Gates
 
-**Policy ID:** `vercel_ai_approvals`  
-**File:** `vercel_ai/approvals.yaml`  
-**Rules:** VAI-013  
-**Severities:** high  
-**Fix types:** config  
+**Policy ID:** `vercel_ai_approvals`
+**File:** `vercel_ai/approvals.yaml`
+**Rules:** VAI-013
+**Severities:** high
+**Fix types:** config
 **References:** LLM06 (Excessive Agency)
 
 ---
