@@ -14,7 +14,7 @@ rules:
     scope: agent
     fix_type: config
   - id: CSDK-103
-    severity: high
+    severity: critical
     confidence: 0.9
     scope: agent
     fix_type: config
@@ -29,7 +29,7 @@ rules:
     scope: agent
     fix_type: config
   - id: CSDK-120
-    severity: high
+    severity: critical
     confidence: 0.9
     scope: agent
     fix_type: config
@@ -71,7 +71,7 @@ references: [LLM01, LLM06]
 **Policy ID:** `claude_sdk_agent_safety`  
 **File:** `claude_sdk/agent_safety.yaml`  
 **Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120, CSDK-121, CSDK-122, CSDK-123, CSDK-124, CSDK-130, CSDK-131  
-**Severities:** high, medium, high, high, high, high, high, medium, high, high, high, high  
+**Severities:** high, medium, critical, high, high, critical, high, medium, high, high, high, high  
 **Fix types:** config, config, config, config, config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
@@ -111,9 +111,9 @@ The amplifier is `permissionMode="bypassPermissions"`. The SDK's interactive
 approval prompt is the one in-band control between a model-chosen tool call and a
 real effect; bypass removes it for every tool the subagent holds. A subagent that
 is granted `Bash` *and* runs under bypass is, in effect, unattended arbitrary
-command execution driven by model output. That is why CSDK-103 is the highest-
-confidence rule in this file and why the others repeatedly warn against pairing a
-grant with bypass.
+command execution driven by model output. That is why the bypass rules — CSDK-103
+and its TypeScript twin CSDK-120 — are the only critical-severity rules in this
+file, and why the others repeatedly warn against pairing a grant with bypass.
 
 The grants split along two threat lines. `Bash` and the write built-ins are
 *excessive agency* (OWASP LLM06): they let the subagent act far beyond a
@@ -170,7 +170,7 @@ are a primary prompt-injection vector with no SDK-level filtering.
 **Confidence 0.8:** Some subagents genuinely need search; the grant alone is a
 strong but not certain signal.
 
-### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions (Severity: high, Confidence: 0.9, Fix type: config)
+### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions (Severity: critical, Confidence: 0.9, Fix type: config)
 
 **What we detect:** `permissionMode="bypassPermissions"` on the AgentDefinition
 (`agent_kwarg_value`).
@@ -182,8 +182,18 @@ tool the subagent runs — the one control between model output and side effects
 model-chosen commands and file writes unattended; a single injection becomes an
 unguarded action.
 
-**Why severity is high and not medium:** It removes the in-band safety control
-wholesale. Highest confidence in the file because the value is read directly.
+**Why severity is critical and not high:** The grant rules in this file
+(CSDK-101/104/105) each hand the subagent one dangerous capability, but the SDK's
+interactive approval gate still stands between a model-chosen call and its
+effect — that residual control is what caps them at high. Bypass removes the
+control itself, for every tool at once. No partial mitigation survives inside the
+SDK: the permission prompt *is* the in-band mitigation, and with it gone,
+whatever the subagent holds — `Bash`, the write built-ins, `WebFetch` — executes
+on model output alone. A single injected instruction is then a completed side
+effect, not a pending approval. This is the same end state the repo-scope rules
+CSDK-201/202 flag when bypass is set at the session level (see
+[repo.md](repo.md)), and it carries the same critical classification there:
+severity follows the end state, not the declaration site.
 
 **Fix type — config:** Drop the kwarg or set `default`/`acceptEdits`; reserve
 bypass for sandboxed, non-interactive contexts.
@@ -234,13 +244,13 @@ allowlists hosts and blocks internal ranges (see also [ssrf.md](ssrf.md)).
 
 **Confidence 0.75:** Legitimate fetch use is frequent; treat as a review prompt.
 
-### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions (Severity: high, Confidence: 0.9, Fix type: config)
+### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions (Severity: critical, Confidence: 0.9, Fix type: config)
 
 **What we detect:** A TypeScript `AgentDefinition` with the kwarg
 `permissionMode: "bypassPermissions"` (predicate `agent_kwarg_value`, matching
 kwarg `permissionMode` against the literal value `bypassPermissions`). This is the
 TypeScript twin of the Python rule
-[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-severity-high-confidence-09-fix-type-config);
+[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-severity-critical-confidence-09-fix-type-config);
 the predicate reads the value directly off the constructor.
 
 **Why it is flaggable:** It disables the SDK's interactive approval gate for
@@ -253,9 +263,16 @@ per-call confirmation.
 model-chosen commands and file writes unattended; a single prompt-injected
 instruction becomes an unguarded action with no human in the loop.
 
-**Why severity is high and not medium:** It removes the in-band safety control
-wholesale, exactly as the Python sibling does. Highest-confidence rule in the file
-because the value is read directly from the declaration.
+**Why severity is critical and not high:** Same defense as the Python sibling
+CSDK-103. The tool-grant rules (CSDK-121/123/124) stop at high because the SDK's
+approval gate remains as the final control over each model-chosen call; bypass
+deletes that gate for every tool the definition grants, and no partial mitigation
+is left inside the SDK once its only in-band control is off. A prompt-injected
+instruction then completes as an unattended side effect through whatever the
+`tools` array holds. The end state — model output acting on the host with no
+human approval — is identical whether bypass is declared in Python (CSDK-103), in
+TypeScript (this rule), or at the session level (CSDK-201/202, repo scope), so
+all four carry critical.
 
 **Fix type — config:** Drop the kwarg or set a safe mode (`"default"` /
 `"acceptEdits"`), and restrict the tool surface with `allowedTools` /

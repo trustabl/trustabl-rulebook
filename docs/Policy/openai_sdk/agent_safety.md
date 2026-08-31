@@ -28,11 +28,6 @@ rules:
     confidence: 0.85
     scope: agent
     fix_type: config
-  - id: OAI-105
-    severity: high
-    confidence: 0.8
-    scope: agent
-    fix_type: config
   - id: OAI-110
     severity: medium
     confidence: 0.6
@@ -43,6 +38,26 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
+  - id: OAI-105
+    severity: high
+    confidence: 0.8
+    scope: agent
+    fix_type: config
+  - id: OAI-107
+    severity: high
+    confidence: 0.85
+    scope: agent
+    fix_type: config
+  - id: OAI-114
+    severity: high
+    confidence: 0.6
+    scope: agent
+    fix_type: config
+  - id: OAI-113
+    severity: medium
+    confidence: 0.6
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06, LLM10]
 ---
 
@@ -50,9 +65,9 @@ references: [LLM01, LLM06, LLM10]
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-105, OAI-109, OAI-110, OAI-112  
-**Severities:** high, high, high, medium, high, high, medium, low  
-**Fix types:** config, config, config, config, config, config, config, config  
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-109, OAI-110, OAI-112, OAI-105, OAI-107, OAI-114, OAI-113  
+**Severities:** high, high, high, medium, high, medium, low, high, high, high, medium  
+**Fix types:** config, config, config, config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06, LLM10
 
 ---
@@ -72,7 +87,12 @@ read the constructor at all, but correlates this agent's construction site to th
 `Runner.run`/`run_sync`/`run_streamed` call(s) that execute it and fires when none
 of them sets `max_turns` — an execution-limit / reliability concern (LLM10,
 Unbounded Consumption), distinct from the prompt-injection and excessive-agency
-framing of the rules above it.
+framing of the rules above it. Finally, three composition rules extend the
+per-agent read across the resolved `handoffs=` graph: OAI-107 (an agent that is
+itself a resolved handoff target while wiring shell-reaching tools) and the
+complementary pair OAI-113 / OAI-114 (an agent whose handoff chain reaches shell
+capability its own wiring does not provide — OAI-113 when the agent declares no
+`input_guardrails`, OAI-114 when it does).
 
 ---
 
@@ -96,7 +116,19 @@ attacker-controlled tool output the final response with no model post-processing
 documented infinite-tool-loop footgun; a raw `Agent` instead of `SandboxAgent`
 (OAI-104) surfaces the host to privileged tools directly.
 
-A third line, independent of both, runs through OAI-112 alone and is not a threat
+A third line — **delegation** — runs through OAI-107, OAI-113 and OAI-114, and
+follows from a single SDK fact: `input_guardrails` run only on the agent that
+first receives the user input, and a handoff target never runs its own
+`input_guardrails` on the delegated turn. Guardrails therefore protect an agent's
+*own* tool surface, not its reach. An agent that delegates — directly or through
+a chain — to a shell-wielding peer has shell reach with no screen in front of it
+(OAI-113/114, computed as the transitive capability closure over resolved
+`handoffs=` edges), and the delegate itself executes privileged tools on turns
+its declared guardrails never see (OAI-107). The chain is what defeats review:
+each constructor looks safe in isolation — the guarded parent holds no dangerous
+tools, the child "is internal" — and the exposure exists only in the composition.
+
+A fourth line, independent of the three, runs through OAI-112 alone and is not a threat
 to injected content or agent capability at all: it is an execution-limit /
 reliability concern (OWASP LLM10, Unbounded Consumption). The `Runner.run` family
 is what actually drives an agent's tool loop to completion, and if none of the
@@ -111,8 +143,9 @@ Claude Agent SDK's CSDK-204 (`max_turns` on `ClaudeAgentOptions`): a generic
 default already bounds the worst case, so the risk is real but modest — which is
 why it sits at low severity.
 
-All six wiring fixes above are *config* — guardrail lists, a kwarg, or a class
-swap on the agent constructor, not tool-code changes. OAI-112's fix is config
+All of the wiring fixes above — the delegation rules included — are *config*:
+guardrail lists, a kwarg, a class swap, or handoff wiring on the agent
+constructor, not tool-code changes. OAI-112's fix is config
 too, but at a different site: the `Runner.run(...)` call that executes the
 agent, not the `Agent(...)`/`SandboxAgent(...)` constructor — the first fix in
 this policy that reaches past the constructor to the call that actually runs it.
@@ -247,6 +280,68 @@ set (three classes, including `hostedMcpTool` whose risk depends on the MCP
 endpoint's trust) also admits more context-dependent legitimate use than OAI-109's
 single `WebSearchTool`, which is why it sits at 0.8 rather than 0.85.
 
+### OAI-107 — Handoff-target agent wires shell or filesystem-touching tools (Severity: high, Confidence: 0.85, Fix type: config)
+
+**What we detect:**
+An agent that appears as a *resolved* handoff target in another agent's
+`handoffs=[...]` (predicate `agent_is_subagent_of_any` — true when this agent is
+the `Resolved` entry of any agent's `HandoffRefs`, matched by name and file path;
+self-handoff edges count) AND whose resolved tool graph gives it shell reach
+(`agent_uses_tool_kind: [shell_invocation]` — a bare shell-invoking function, a
+decorated `@function_tool` whose body discovery stamped with the structural
+`shells_out` fact, or a hosted shell-grade tool class such as `ShellTool`,
+`LocalShellTool`, `CodeInterpreterTool`, or `ApplyPatchTool`). Both clauses read
+the discovery graph, not raw source: the handoff edge must have resolved
+(same-file, by `Name` or `VarName`), and the shell reach must come from a
+resolved or hosted tool reference.
+
+**Why it is flaggable:**
+In the OpenAI Agents SDK, `input_guardrails` run only on the agent that first
+receives the user input — a handoff target never runs its own `input_guardrails`
+on the delegated turn. A parent can therefore route around its own screen by
+delegating: the child's shell-touching tools execute on a payload no guardrail
+ever inspected. This is why the rule deliberately does *not* require the child's
+`input_guardrails` to be empty — a child that declares guardrails still does not
+run them on the handed-off turn, so the shell exposure is the hazard regardless
+of the child's own configuration.
+
+**Real-world consequence:**
+A triage agent with solid `input_guardrails` hands "run the diagnostics the user
+asked for" to a fix-it child holding a `subprocess`-wrapping tool. A
+prompt-injected user message the parent's guardrail was never written to catch —
+it screens the parent's own tool surface, not the child's — arrives at the child
+reformulated as an innocuous-looking delegation payload and drives
+`rm`/`curl`-grade commands with nothing in front of them.
+
+**Why severity is high and not medium — or critical:**
+High for the same reason as OAI-101: an unscreened path from model-influenced
+input to shell execution, on the SDK's primary defense surface. It is not medium
+because the bypass is not conditional on a misconfiguration elsewhere — the SDK's
+guardrail placement *guarantees* the child's screen never runs on delegated
+turns, so the gap exists whenever the edge is exercised. It stays off critical
+because execution still requires the parent to actually delegate
+attacker-influenced content, and a handoff `input_filter` or tool-level
+validation may constrain the payload in ways the static read cannot see.
+
+**Fix type — config:**
+Every remediation is wiring: remove the shell tools from the handoff target, move
+the privileged work up to the guarded entry agent, or constrain the delegated
+payload with an `input_filter` on the handoff plus a parent-side
+`@input_guardrail`. No tool source changes.
+
+**Confidence 0.85:**
+The same number as OAI-101, for the same shape of gap: the mechanism is
+unconditional, but mitigations outside the two predicates' sight exist. The
+parent may attach an `input_filter` to the handoff (discovery does not model
+input filters), the child's shell tool may validate or allow-list internally, or
+the child may in practice only ever be run as a top-level agent — where its
+guardrails *do* run — with the handoff edge vestigial. In the other direction the
+rule under-fires rather than over-fires: a `handoffs=` list item wrapped in the
+`handoff(...)` helper resolves External rather than to the target (a documented
+v1 limitation), a cross-file target resolves External, and a post-construction
+`agent.handoffs = [...]` assignment is never captured — all false negatives that
+cost coverage, not confidence.
+
 ### OAI-109 — WebSearchTool without input_guardrails (Severity: high, Confidence: 0.85, Fix type: config)
 
 **What we detect:** `agent_uses_hosted_tool_class: [WebSearchTool]` with empty
@@ -352,18 +447,166 @@ enforced by a wrapper or retry harness outside the call itself is invisible,
 and a `max_turns` value passed via a variable the scanner cannot resolve to a
 literal reads as absent.
 
+### OAI-113 — Unguarded agent's handoff chain reaches shell execution (Severity: medium, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+An agent whose constructor has no `input_guardrails` kwarg at all
+(`not: agent_kwarg_present: [input_guardrails]` — pure key-presence, so even
+`input_guardrails=None` or `=[]` moves the agent out of this rule and into
+OAI-114) AND whose transitive capability closure contains `shell` while its own
+wiring provides none (`transitive_capability_exceeds_direct: [shell]`). The
+closure is `analysis.ComputeComposition`'s fixpoint over resolved handoff edges —
+the agent's own tool capabilities plus everything reachable through `handoffs=`
+chains, in the closed alphabet shell/code_exec/filesystem/network — and the
+"direct" side is recomputed with the same derivation
+(`analysis.DirectCapabilities`), so the two sides cannot drift. An agent with an
+empty closure matches nothing: composition rules only fire on agents the
+analysis actually classified.
+
+**Why it is flaggable:**
+If this agent is where user input enters, nothing screens that input anywhere on
+a delegation path that ends in shell execution: `input_guardrails` run only on
+the first agent in the run, and handoff targets never run their own on delegated
+turns. The `exceeds_direct` shape is what makes the finding non-obvious — this
+agent holds no dangerous tool itself, so nothing in its own constructor suggests
+shell exposure, yet a resolved chain gives the model a path from this agent's
+input to a shell.
+
+**Real-world consequence:**
+A front-door router with no guardrails delegates to a planner, which delegates to
+an executor holding a `subprocess`-wrapping tool. An injected request traverses
+both hops and shells out — and no single-constructor review would have caught
+it: the router has no dangerous tools, the planner has none either, and the
+executor "is internal."
+
+**Why severity is medium and not high:**
+Two reasons. First, the dangerous node already carries the high-severity alarm:
+whenever this rule fires over resolved edges, the shell-holding agent in the
+chain is itself a resolved handoff target with shell-reaching tools, so OAI-107
+fires there at high — this finding adds entry-point attribution, not the primary
+alert. Second, the rule cannot prove this agent is actually the run entry point;
+for an agent that only ever receives delegated turns, its own `input_guardrails`
+would not run anyway, so their absence changes nothing there. Conditional impact
+plus overlap with a high-severity sibling is the same calibration that puts
+OAI-104 at medium.
+
+**Fix type — config:**
+Add `input_guardrails=[...]` on this constructor so the entry point of the chain
+screens input before any downstream shell tool can act on it — one kwarg, no
+tool source changes. Reviewing whether the downstream agent needs shell at all
+is likewise wiring.
+
+**Confidence 0.6:**
+The composition predicates carry gaps the single-constructor rules above do not.
+The closure is computed over constructor-kwarg handoff edges only: a chain wired
+by post-construction attribute assignment (`agent.handoffs = [b]`) is invisible,
+as is a `handoffs=` item wrapped in the `handoff(...)` helper or a target defined
+in another file (both resolve External) — false negatives that also make the
+closure a lower bound. On the false positive side: the rule cannot tell whether
+this agent is actually where user input enters (a mid-chain agent's guardrails
+would not run regardless); an `input_filter` on any hop may already constrain the
+delegated payload exactly as the fix recommends, invisibly; and the `shell`
+classification is structural (tool kind, `shells_out` fact, hosted class), so a
+downstream tool whose subprocess call is internally allow-listed still counts.
+Those over- and under-reads together hold it at 0.6.
+
+### OAI-114 — Guarded agent transitively wields shell through its handoff chain (Severity: high, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+The complement of OAI-113 on the same closure: the constructor HAS an
+`input_guardrails` kwarg (`agent_kwarg_present: [input_guardrails]` — pure
+presence, no value inspection) AND `transitive_capability_exceeds_direct:
+[shell]` — the closure over resolved handoff edges includes `shell` while the
+agent's own wiring provides none. The pair partitions every
+transitive-shell-excess agent: exactly one of OAI-113/OAI-114 fires, keyed on
+whether the kwarg appears.
+
+A note on the id, for readers of older material: this rule was numbered
+**OAI-112** before the fixture/production reconciliation. Production's shipped
+`max_turns` rule already held OAI-112, and shipped ids never change, so the
+renumber landed on this — then unshipped — side: the transitive-shell
+composition rule became OAI-114, and OAI-112 now permanently names the
+`max_turns` rule documented above. Older drafts citing OAI-112 for transitive
+shell reach mean this rule.
+
+**Why it is flaggable:**
+The declared guardrails create false confidence. `input_guardrails` run only
+where user input first lands; every delegated turn downstream runs unscreened,
+and the handoff may transform the payload before it reaches the shell-wielding
+agent — so the screen the author wrote covers precisely the turns that never
+touch a shell. A reviewer reading this constructor sees guardrails present and
+no dangerous tools wired, and reasonably concludes the agent is safe; the danger
+is one resolved edge away, in a direction the guardrail mechanism structurally
+cannot cover.
+
+**Real-world consequence:**
+A support agent with strict `input_guardrails` — written and tested against its
+*own* tool surface — delegates "escalate to ops" to an ops agent whose tools
+shell out. An injection phrased as an escalation request passes the parent's
+guardrail (which screens for misuse of the parent's tools), is reformulated by
+the model into the handoff payload, and executes downstream where no guardrail
+runs. The team's security review signed off on the parent because the guardrails
+were demonstrably present.
+
+**Why severity is high and not medium:**
+Deliberately one tier above its unguarded sibling OAI-113, and the inversion is
+the point: a control that is present but silently inapplicable is worse than an
+honest absence. OAI-113's missing kwarg is visible to any reviewer; here the
+declared guardrails actively defeat review — the agent *looks* covered, so
+nobody adds the compensating `input_filter` or moves the privileged work up. The
+remediation also belongs unambiguously to this agent: it declared both the
+guardrails and the handoff, whereas OAI-113's primary alarm is carried by
+OAI-107 on the downstream target. It stays off critical for the same reasons as
+OAI-107: attacker-influenced content must actually be delegated, and
+out-of-sight mitigations (an `input_filter`, tool-level validation) may exist.
+
+**Fix type — config:**
+All three remediations are wiring, not tool code: move the shell-wielding work
+up to this agent where its guardrails actually run, remove the shell tools from
+the downstream agent, or constrain the delegated payload with an `input_filter`
+on the handoff (pairing it with tool-level validation downstream is
+defense-in-depth beyond the rule's ask).
+
+**Confidence 0.6:**
+Every composition gap listed under OAI-113 applies verbatim: the closure is
+computed over constructor-kwarg handoff edges only, so a post-construction
+`agent.handoffs = [...]` assignment is invisible; `handoff(...)`-wrapped and
+cross-file targets resolve External (false negatives); an `input_filter` on any
+hop is invisible (false positive); and `shell` classification is structural. Two
+more gaps are specific to this rule's "guarded" premise. `agent_kwarg_present`
+is pure key-presence: `input_guardrails=None` or `input_guardrails=[]` counts as
+guarded, so an effectively unguarded agent can land here with the
+false-confidence framing overstated — the exposure is real either way, but it
+belonged in OAI-113's framing. And presence says nothing about quality: a no-op
+guardrail satisfies the clause exactly as it satisfies OAI-101. The 0.6 matches
+OAI-113 because the dominant uncertainty — the closure's blind spots and the
+filter blindness — is shared.
+
 ---
 
 ## What this policy does not cover
 
 - The *quality* of guardrails that are present — a no-op `input_guardrail` /
   `output_guardrail` satisfies OAI-101/106/109/110 without screening anything.
-- Shell/filesystem capability delivered via a `@function_tool` (a `KindOpenAITool`)
-  or hosted shell tool rather than a bare shell-invoking function — OAI-101/104's
-  `agent_uses_tool_kind: [shell_invocation]` matches only the bare-function shape, a
-  known coverage gap.
-- Handoff targets: an agent that hands off to a less-guarded sub-agent (a graph-level
-  concern this per-agent rule does not traverse).
+- Filesystem-only capability: `agent_uses_tool_kind: [shell_invocation]`
+  (OAI-101/104/107) matches bare shell-invoking functions, decorated tools
+  discovery stamped with the `shells_out` fact, and hosted shell-grade classes
+  (`ShellTool`, `LocalShellTool`, `CodeInterpreterTool`, `ApplyPatchTool`) — but
+  a tool that only reads or writes the filesystem without shelling out matches
+  nothing, so the "or filesystem-touching" half of those rules' titles is
+  delivered only when the file access rides on a shell.
+- Handoff coverage (OAI-107/113/114) is Python-only and edge-limited: the rules
+  read resolved constructor-kwarg `handoffs=` edges. A TypeScript OpenAI agent's
+  handoff chain has no equivalent rules; a `handoffs=` item wrapped in the
+  `handoff(...)` helper, a target defined in another file, or a
+  post-construction `agent.handoffs = [...]` assignment resolves External or is
+  never captured, so those chains fire nothing.
+- An `input_filter` on a handoff — the very mitigation OAI-107/114's fix text
+  recommends — is invisible to discovery, so a chain already constrained per the
+  fix still fires (known false positive).
+- OAI-113/114 fire only when transitive shell *exceeds* direct: an agent that
+  both wields shell itself and delegates to shell is covered by the direct rules
+  alone — the chain adds no separate finding on that agent.
 - Guardrails or sandboxing applied by a wrapper/factory the static check cannot see.
 - For OAI-105: a TypeScript agent whose options object (and therefore its hosted-tool
   list) is opaque to the static read fires nothing — the rule requires a *resolved*
@@ -386,7 +629,7 @@ literal reads as absent.
 ## Recommendations beyond the fix
 
 ```python
-from agents import Agent, SandboxAgent, Runner, input_guardrail, output_guardrail
+from agents import Agent, SandboxAgent, Runner, handoff, input_guardrail, output_guardrail
 
 agent = SandboxAgent(
     name="research",
@@ -397,6 +640,16 @@ agent = SandboxAgent(
 )
 
 result = Runner.run_sync(agent, user_input, max_turns=8)  # OAI-112: sized to this agent's task
+
+# Delegation (OAI-107/113/114): privileged work stays on the guarded entry
+# agent; a handoff that must exist gets an explicit payload filter, because
+# the child's own input_guardrails will NOT run on the delegated turn.
+ops = Agent(name="ops", tools=[restart_service])  # no shell reach on the target
+triage = Agent(
+    name="triage",
+    input_guardrails=[screen_user_input],
+    handoffs=[handoff(ops, input_filter=keep_only_ticket_id)],
+)
 ```
 
 1. Wire both `input_guardrails` and `output_guardrails` on any agent that touches
@@ -405,7 +658,13 @@ result = Runner.run_sync(agent, user_input, max_turns=8)  # OAI-112: sized to th
    `tool_choice="required"` + `reset_tool_choice=False` pairing unless a tool
    deterministically terminates the loop.
 3. Prefer `SandboxAgent` with a restrictive `Manifest` for any agent holding
-   shell/filesystem tools, and screen handoff targets for at-least-equal guarding.
-4. Pass `max_turns=` on whichever `Runner.run`/`run_sync`/`run_streamed` call
+   shell/filesystem tools — including handoff targets, where sandboxing is one
+   of the few screens that still applies on delegated turns.
+4. Treat every handoff as a trust boundary: keep shell tools off handoff targets
+   where possible, attach an `input_filter` that reduces the delegated payload
+   to the minimum the child needs, and validate inside the downstream tools
+   themselves — a child's own `input_guardrails` never run on delegated turns,
+   so parent-side screening and tool-level checks are the only ones that do.
+5. Pass `max_turns=` on whichever `Runner.run`/`run_sync`/`run_streamed` call
    executes the agent, sized to the task rather than left at the SDK default,
    and keep it consistent across every call site that runs the same agent.
