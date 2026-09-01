@@ -18,6 +18,11 @@ rules:
     confidence: 0.6
     scope: repo
     fix_type: config
+  - id: CSDK-205
+    severity: medium
+    confidence: 0.7
+    scope: repo
+    fix_type: config
 references: [LLM06, LLM10]
 ---
 
@@ -25,9 +30,9 @@ references: [LLM06, LLM10]
 
 **Policy ID:** `claude_sdk_repo`  
 **File:** `claude_sdk/repo.yaml`  
-**Rules:** CSDK-201, CSDK-202, CSDK-204  
-**Severities:** high, high, low  
-**Fix types:** config, config, config  
+**Rules:** CSDK-201, CSDK-202, CSDK-204, CSDK-205  
+**Severities:** high, high, low, medium  
+**Fix types:** config, config, config, config  
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -35,7 +40,8 @@ references: [LLM06, LLM10]
 ## What this policy covers
 
 Repo-scope rules for project-wide Claude Agent SDK session configuration
-posture: two flavors of approval gating and one flavor of execution bounding.
+posture: two flavors of approval gating, one flavor of execution bounding,
+and one flavor of tool-surface bounding.
 
 Approval gating: the posture declared in `.claude/settings.json` /
 `settings.local.json` (predicate `repo_claude_default_mode_is`) and the
@@ -48,6 +54,15 @@ Execution bounding: whether any `ClaudeAgentOptions(...)` construction in the
 project sets an explicit `max_turns` (predicate
 `repo_claude_options_max_turns_missing`). Fires once per scan when the project
 has at least one such construction and none of them cap turns.
+
+Tool-surface bounding: whether a `ClaudeAgentOptions(...)` construction that
+sets `permission_mode="acceptEdits"` is paired with an explicit
+`disallowed_tools` deny-list (predicates
+`repo_claude_options_permission_mode_is: [acceptEdits]` combined with
+`repo_claude_options_disallowed_tools_missing`). This is a distinct mechanism
+from the other two: Claude SDK's `allowed_tools` only auto-approves listed
+tools, it does not restrict which tools can run, so `disallowed_tools` is the
+only construct in this SDK that actually narrows the tool surface.
 
 ---
 
@@ -202,26 +217,103 @@ the scanner cannot resolve to a literal, and — see the coverage gap below —
 any TypeScript project, since discovery of `ClaudeAgentOptions(...)` is
 Python-only today.
 
+### CSDK-205 — Claude Agent SDK session auto-approves edits with no tool deny-list (Severity: medium, Confidence: 0.7, Fix type: config)
+
+**What we detect:**
+A `ClaudeAgentOptions(...)` construction that sets
+`permission_mode="acceptEdits"` (predicate
+`repo_claude_options_permission_mode_is: [acceptEdits]`), combined with no
+non-opaque construction in the project setting `disallowed_tools` (predicate
+`repo_claude_options_disallowed_tools_missing`). Both conjuncts must hold
+(`match: all:`) — the rule does not fire on `acceptEdits` alone, and it does
+not fire on a missing deny-list alone. `bypassPermissions` is deliberately
+excluded from the mode list here; that value is CSDK-202's rule, and CSDK-205
+would otherwise double-report the same `ClaudeAgentOptions(...)` call.
+
+**Why it is flaggable:**
+Claude SDK's permission model is not a conventional allow-list: `allowed_tools`
+only auto-approves the tools it names, it does not restrict which tools can
+run. An unlisted tool still executes — it just falls back to whatever the
+current `permission_mode` allows. `acceptEdits` already removes the approval
+prompt for file writes/edits, so with no `disallowed_tools` deny-list, nothing
+in the session's own configuration bounds the rest of the tool surface: shell
+execution, network fetches, and any other tool the session can reach all run
+under the same permissive posture edits do, with no config-level statement of
+which ones should be off-limits. This is the same LLM06 (Excessive Agency)
+mechanism as CSDK-201/202, narrowed to the combination the SDK actually makes
+dangerous — a missing deny-list, not a missing allow-list.
+
+**Real-world consequence:**
+A session built this way behaves safely for its intended purpose (auto-editing
+files without interrupting a human) but carries no explicit boundary stopping
+a prompt-injected or mistaken model action from reaching a tool the developer
+never intended it to use — there was never a deny-list to consult. Unlike
+`bypassPermissions`, this is a plausible, even common, configuration for a
+legitimate file-editing workflow, which is exactly why the missing deny-list
+matters: the developer likely believes `allowed_tools` (if set) is already
+doing the restricting job `disallowed_tools` actually does.
+
+**Why severity is medium and not high:**
+Lower than CSDK-201/202 because `acceptEdits` only removes the prompt for file
+edits, not for every tool — shell and network calls still prompt unless a
+separate mechanism also loosens them. Higher than CSDK-204 because this is a
+present, exploitable gap in the access-control surface, not a missing
+execution bound with a runtime default as a backstop.
+
+**Fix type — config:**
+Pass `disallowed_tools=` to `ClaudeAgentOptions(...)`, naming the tools the
+session must never call. It is a constructor argument change, not a
+tool-logic change.
+
+**Confidence 0.7:**
+Lower than CSDK-201/202 (0.9) because this rule stacks two absence/value
+checks rather than one direct value match, so it inherits `disallowed_tools`
+missing's higher false-positive surface: an options object built but never
+used, a deny-list enforced by a wrapper outside the constructor call, or a
+project where no tool the session can reach is actually dangerous. It also
+inherits `repoClaudeOptionsMissingKwarg`'s tri-state gap — a construction that
+sets `disallowed_tools=[]` (empty list) or `disallowed_tools=None` still reads
+as "set" and silences the rule, the same gap CSDK-204 has for
+`max_turns=None`. Higher than CSDK-204 (0.6) because a present, permissive
+`permission_mode` value is stronger evidence than a pure omission. False
+negatives include a `disallowed_tools` value passed via a variable the scanner
+cannot resolve to a literal, and — same as CSDK-204 — any TypeScript project,
+since discovery of `ClaudeAgentOptions(...)` is Python-only today.
+
 ---
 
 ## What this policy does not cover
 
 - `permission_mode` / `defaultMode` values supplied dynamically from a variable,
   environment lookup, or config file the scanner cannot resolve to a literal.
-- `acceptEdits` mode — auto-approving file edits is a narrower risk these rules
-  deliberately do not flag, since shell and network actions still prompt.
+- Bare `acceptEdits` mode with a `disallowed_tools` deny-list present.
+  Auto-approving file edits is a narrower risk these rules deliberately do not
+  flag on its own, since shell and network actions still prompt — CSDK-205
+  only fires on the combination of `acceptEdits` *and* no deny-list.
+- `allowed_tools` (with or without contents). It only auto-approves; it never
+  narrows the tool surface in this SDK, so an empty or absent `allowed_tools`
+  is not itself a finding — see the CSDK-205 rationale above.
 - Per-tool allow/deny lists in `settings.json` (`permissions.allow` /
   `deny` / `ask`) that grant broad authority without flipping `defaultMode` —
   a separate settings-permission policy would cover that surface.
 - Whether the agent's tools are themselves dangerous; this policy is about the
   approval gate, not what is behind it.
-- **TypeScript session configuration (CSDK-204).** Discovery of
+- **TypeScript session configuration (CSDK-204, CSDK-205).** Discovery of
   `ClaudeAgentOptions(...)` walks Python AST only. The TypeScript equivalent —
-  `query({ options: { maxTurns } } )` — is modeled as a `QueryMainAgent`
-  agent-scope declaration, not a `ClaudeAgentOptionsDef`, so a TypeScript
-  project with no `maxTurns` is currently invisible to this rule. Closing this
-  gap needs an agent-scope rule targeting `claude_query_main`, not a change to
-  this policy.
+  `query({ options: { maxTurns, permissionMode, disallowedTools } } )` — is
+  modeled as a `QueryMainAgent` agent-scope declaration, not a
+  `ClaudeAgentOptionsDef`, so a TypeScript project with no `maxTurns`, or with
+  `acceptEdits` and no `disallowedTools`, is currently invisible to these
+  rules. Closing this gap needs agent-scope rules targeting
+  `claude_query_main`, not a change to this policy.
+- **CSDK-205 agent-scope analogue not yet shipped.** The same
+  permissive-mode-plus-no-deny-list signal applies to a Claude
+  `AgentDefinition(...)` (agent scope) the same way it applies to
+  `ClaudeAgentOptions(...)` (repo scope) — `permissionMode` /
+  `disallowedTools` land on `AgentDef.Kwargs` generically already, so no
+  discovery change is needed there either. That agent-scope rule is scoped but
+  not yet built; see `docs/decisions/tool-allowlist-scope.md` in the engine
+  repo.
 - **CSDK-204 exact default behavior.** The rule deliberately does not assert
   a specific default turn count in its `explanation` text; the SDK's default
   was not independently verified for this rationale doc, unlike the
