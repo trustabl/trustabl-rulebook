@@ -53,6 +53,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: ADK-111
+    severity: high
+    confidence: 0.75
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06]
 ---
 
@@ -60,9 +65,9 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `google_adk_agent_safety`  
 **File:** `google_adk/agent_safety.yaml`  
-**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-109, ADK-110  
-**Severities:** medium, high, high, medium, high, high, high, medium, medium, medium  
-**Fix types:** config, config, config, config, config, config, config, config, config, config  
+**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-109, ADK-110, ADK-111  
+**Severities:** medium, high, high, medium, high, high, high, medium, medium, medium, high  
+**Fix types:** config, config, config, config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
 ---
@@ -76,7 +81,10 @@ agent) on the constructor kwargs and the resolved tool/sub-agent graph. The rule
 cluster around ADK's two synchronous interception points —
 `before_tool_callback` (sees a tool call before it runs) and
 `before_model_callback` (sees the assembled request before the model runs) — which
-are ADK's analog of the OpenAI SDK's guardrails.
+are ADK's analog of the OpenAI SDK's guardrails. ADK-111 is different in kind from
+the rest: it is a hosted-tool-surface / access-control concern — whether the
+`tool_filter=` allow-list narrows an `MCPToolset` down from the remote server's
+full tool catalog — not a missing interception callback.
 
 ---
 
@@ -104,7 +112,25 @@ tools (ADK-105/110) pull attacker-controllable content into the loop, and absent
 `safety_settings` (ADK-104) leaves Gemini's content filters off — so harmful or
 injected content is neither screened on the way in nor filtered on the way out.
 
-All ten fixes are *config* — a callback, a kwarg, or a graph restructure on the
+A third, narrower line is **tool-access scoping** (ADK-111), and it sits apart from
+the other nine rules structurally, not just thematically. Every other tool-related
+rule in this file (ADK-102/103/105/106/107/110) concerns a *fixed, locally-defined*
+tool — a specific built-in class the agent's source names directly, whose behavior
+is knowable ahead of time and whose only open question is whether a callback gates
+it. `MCPToolset` is not that shape: it hands the agent every tool a remote MCP
+server currently exposes, a catalog the agent's source never enumerates and that
+can grow or change behavior the moment the server is redeployed, entirely outside
+this codebase's control. `tool_filter=` is ADK's only static mechanism for
+narrowing that catalog to a named allow-list — it is the access-control primitive
+for a hosted, third-party tool surface, not a mediation callback for a known one.
+That makes ADK-111's detection mechanism different too:
+`agent_uses_hosted_tool_class: [MCPToolset]` finds the wiring, and
+`agent_hosted_tool_kwarg_present` (negated) checks for the allow-list kwarg on
+that specific hosted-tool ref — the same predicate family that reads
+`before_tool_callback`/`before_model_callback` presence elsewhere in this file,
+here pointed at a kwarg instead of a callback.
+
+All eleven fixes are *config* — a callback, a kwarg, or a graph restructure on the
 agent constructor, not tool-body code.
 
 ---
@@ -218,6 +244,34 @@ fetching is frequently legitimate. **Fix type — config:** add a `before_tool_c
 that allow-lists hosts and blocks internal ranges. **Confidence 0.7:** legitimate fetch
 use is common; a review prompt.
 
+### ADK-111 — Agent wires an MCPToolset with no tool_filter (Severity: high, Confidence: 0.75, Fix type: config)
+**What we detect:** an `LlmAgent` that uses an `MCPToolset` (`agent_uses_hosted_tool_class:
+[MCPToolset]`) with no `tool_filter` kwarg present on that ref
+(`agent_hosted_tool_kwarg_present`, negated). **Why flaggable:** unlike an explicit
+`tools=[FunctionTool(...), ...]` list, `MCPToolset` connects the agent to every tool the
+remote MCP server currently exposes — a surface that is not enumerable from the agent's
+source, can grow or change behavior whenever the server is updated, and is entirely
+outside this codebase's control. `tool_filter=` is ADK's only mechanism for narrowing
+that catalog to a named allow-list; without it, the agent inherits the server's full, and
+potentially server-operator-controlled, tool set with no static boundary a code reviewer
+can check. **Real-world consequence:** the MCP server operator adds a destructive or
+data-exfiltrating tool to the catalog and the agent gains it silently, with no code change
+on the agent side to review. **Why high:** an unbounded, remotely-controlled tool grant.
+**Fix type — config:** pass `tool_filter=[...]` to the `MCPToolset` constructor naming the
+specific tool names this agent is allowed to call, e.g. `MCPToolset(connection_params=...,
+tool_filter=["read_file", "list_directory"])`; re-review the filter whenever the agent's
+task changes. **Confidence 0.75:** two independent gaps sit below this rule's view. A
+`tool_filter` value assembled elsewhere and passed via `**kwargs` splat, rather than as a
+literal `tool_filter=` keyword at the `MCPToolset(...)` call site, is invisible to the
+kwarg lookup and reads as absent — a false negative. And the rule only checks whether a
+filter is *declared*, not what the server actually exposes: an MCP server that the
+operator has already scoped to a minimal, safe tool set looks identical, from the client
+source, to one exposing a dangerous unbounded catalog — a false positive this rule cannot
+resolve from the client side. A third gap sits alongside these: the predicate checks
+whether the `tool_filter` kwarg is *present*, not what it evaluates to — an explicit
+`tool_filter=None` or `tool_filter=[]` reads as present and satisfies the rule, even
+though neither value actually narrows the tool catalog.
+
 ---
 
 ## What this policy does not cover
@@ -230,6 +284,10 @@ use is common; a review prompt.
   tools/guardrails are out of scope.
 - Callbacks or config supplied via variables the scanner cannot resolve to the
   constructor.
+- What tools the remote MCP server behind an `MCPToolset` actually exposes (ADK-111)
+  — only whether `tool_filter=` is declared. A server already scoped by its operator to
+  a minimal, safe tool set is indistinguishable, at this rule's level, from a server
+  exposing a dangerous, unbounded catalog.
 
 ---
 
@@ -237,12 +295,19 @@ use is common; a review prompt.
 
 ```python
 from google.adk.agents import LlmAgent
+from google.adk.tools.mcp_tool import MCPToolset
 from google.genai import types
 
 agent = LlmAgent(
     name="researcher",
     description="Searches the web and summarizes results for the orchestrator.",
-    tools=[GoogleSearchTool()],
+    tools=[
+        GoogleSearchTool(),
+        MCPToolset(
+            connection_params=...,
+            tool_filter=["read_file", "list_directory"],   # ADK-111
+        ),
+    ],
     before_tool_callback=validate_tool_call,          # ADK-102/105/107/110
     before_model_callback=screen_model_request,       # ADK-106
     generate_content_config=types.GenerateContentConfig(
@@ -258,3 +323,7 @@ agent = LlmAgent(
    `code_executor` — and make the callbacks real gates, not stubs.
 3. Keep shell/privileged capability at the orchestrator, never on a delegated
    sub-agent (ADK-103); bound every `LoopAgent` with `max_iterations` (ADK-108).
+4. Name an explicit `tool_filter=[...]` on every `MCPToolset` (ADK-111), and
+   re-review it whenever the agent's task changes — treat any server tool not in the
+   list as excluded by default, since the server's full catalog is otherwise outside
+   this codebase's control.
