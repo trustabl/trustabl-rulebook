@@ -97,13 +97,11 @@ crate, `#[tool]`-attributed methods).
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
-An MCP server publishes its tool catalog — names, descriptions, and input
-schemas — across a transport to **whatever client and model connect to it**.
-The author does not control, and often cannot see, the consuming agent. A weak
-description or an unconstrained schema therefore degrades tool selection for
-every consumer of the server, and an ambiguous name collides more easily with
-similarly-named tools from other servers mounted in the same session. The model
-routes on the published metadata; that metadata is the entire contract.
+MCP servers sit across a trust boundary. The tool description is published to every connecting client and becomes the primary signal a model uses when deciding whether (and how) to call the tool. 
+
+Unlike a normal library function that is called by code the author controls, an MCP tool is discovered and selected at runtime by a language model that has never seen the implementation. When the description is missing or weak, the model is forced to guess from the tool name alone. This produces wrong-tool selection, skipped calls, and hallucinated arguments — and the failure affects every agent that mounts the server.
+
+Because the description is the main routing signal across an untrusted boundary, its absence is a reliability defect even when the tool code itself is correct.
 
 ---
 
