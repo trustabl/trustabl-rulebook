@@ -13,6 +13,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: OAI-116
+    severity: high
+    confidence: 0.75
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06]
 ---
 
@@ -20,7 +25,7 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `openai_sdk_mcp_safety`  
 **File:** `openai_sdk/mcp_safety.yaml`  
-**Rules:** OAI-106, OAI-115  
+**Rules:** OAI-106, OAI-115, OAI-116  
 **Severities:** high  
 **Fix types:** config  
 **References:** LLM01, LLM06
@@ -44,6 +49,14 @@ Two related but distinct gaps in how an OpenAI Agents SDK agent wires MCP:
   `agent_hosted_tool_kwarg_present: {class: HostedMCPTool, kwarg:
   tool_config.allowed_tools}` — the same `not: <hosted-kwarg-present>` shape
   Google ADK's `ADK-111` uses for `MCPToolset`/`tool_filter`.
+- **OAI-116** — the TypeScript sibling of OAI-115: agents that wire a
+  `hostedMcpTool({...})` factory call (`@openai/agents`) whose options set no
+  `allowedTools`. Same match shape, TS-flavored: `agent_uses_hosted_tool_class:
+  [hostedMcpTool]` AND NOT `agent_hosted_tool_kwarg_present: {class:
+  hostedMcpTool, kwarg: allowedTools}`. The TS SDK's options object is flat —
+  `allowedTools` sits directly on the factory call, with no `tool_config` /
+  `toolConfig` wrapper — so the kwarg path has one segment where Python's has
+  two.
 
 ---
 
@@ -83,7 +96,12 @@ Google ADK's `ADK-111` documents for `MCPToolset`/`tool_filter` — a remote
 party, not the agent author, deciding the agent's tool surface — layered with
 the LLM01 tool-poisoning exposure OAI-106 already covers for the
 directly-connected case: every tool in an unfiltered catalog is a tool
-description the model reads unfiltered too.
+description the model reads unfiltered too. `@openai/agents`'s TypeScript
+`hostedMcpTool({...})` factory is the same mechanism under a different name
+and a flat options shape — OAI-116 is its dedicated rule, per this repo's
+SDK-scoped-rules discipline (a Python `HostedMCPTool` rule and a TS
+`hostedMcpTool` rule stay two rules, never one `applies_to` widened across
+both).
 
 ---
 
@@ -172,6 +190,73 @@ CSDK-204/CSDK-205 carry for their own missing-kwarg checks), silencing the
 rule on an empty or explicitly-disabled allow-list that is functionally
 identical to having none.
 
+### OAI-116 — TypeScript agent wires a hostedMcpTool with no allowedTools allow-list (Severity: high, Confidence: 0.75, Fix type: config)
+
+**What we detect:** an agent whose `HostedToolRefs` include a resolved
+`hostedMcpTool` factory call (`agent_uses_hosted_tool_class: [hostedMcpTool]`)
+where `allowedTools` is not present on that call's captured options
+(`not: agent_hosted_tool_kwarg_present {class: hostedMcpTool, kwarg:
+allowedTools}`). The TS options object is flat, so the kwarg path is a single
+segment — `allowedTools`, not `tool_config.allowed_tools` — captured by
+`TSObjectKwargs` regardless of whether it is written as a bare string array
+(`allowedTools: ["ask_question"]`) or a filter object
+(`allowedTools: { toolNames: [...] }`); both shapes give the lookup a non-nil
+node and silence the rule. A `hostedMcpTool()` call with no options object at
+all — and so no `allowedTools` — also fires, correctly, mirroring OAI-115's
+same no-kwargs-at-all case.
+
+**Why it is flaggable:** identical to OAI-115 — `hostedMcpTool` hands a
+server URL to OpenAI's Responses API and the agent inherits whatever tools
+that server currently advertises, a set decided by the server operator,
+invisible from this codebase, and free to grow or change meaning on the next
+server deploy with no diff in the agent's repo. `allowedTools` is the SDK's
+only static mechanism for pinning that inherited set to a named allow-list.
+
+**Real-world consequence:** the same unreviewed-catalog-growth scenario
+OAI-115 documents, sharpened by a TypeScript-specific default: unlike
+Python's `HostedMCPTool`, which passes `tool_config` through raw and falls
+back to the Responses API's platform default of approval-required, the JS SDK
+injects `require_approval: 'never'` into the wire payload whenever
+`requireApproval` is omitted from the options object (verified directly in
+`hostedMcpTool`'s implementation in `packages/agents-core/src/tool.ts`, not
+just its docs). An agent that sets neither `allowedTools` nor
+`requireApproval` therefore has no static boundary *and* no runtime human
+checkpoint — every tool the server currently exposes executes without
+confirmation, not merely without review.
+
+**Why severity is high and not critical (or medium):** same reasoning as
+OAI-115 and ADK-111 — the finding proves inherited breadth, not inherited
+danger, so not critical; and the boundary is delegated to a remote party that
+can move without any change in the scanned code, so not medium.
+
+**Fix type — config:** add `allowedTools` to the `hostedMcpTool({...})` call's
+options — wiring, not tool-body code.
+
+**Confidence 0.75 — one notch above OAI-115's 0.7:** OAI-115's discount from
+ADK-111's 0.75 is priced entirely on a benign-fire path this rule does not
+have. That path is Python's platform-default approval-required fallback when
+`require_approval` is omitted — a *documented API behavior*, not something
+pinned by quotable SDK source, per the parent decision doc
+(`docs/decisions/tool-allowlist-scope.md`). The TypeScript SDK forecloses that
+same path in verifiable source: omitting `requireApproval` does not fall
+through to a safer platform default, it is actively overwritten to `'never'`
+inside `hostedMcpTool` itself. With the one mitigating path OAI-115 accounts
+for gone, and no other gap distinguishing the two rules, OAI-116 returns to
+ADK-111's 0.75 rather than inheriting OAI-115's discount. The
+false-positive/false-negative gaps otherwise mirror OAI-115's: a
+`hostedMcpTool({...})` call built from a spread or a variable rather than an
+object literal is not captured (`TSObjectKwargs` only descends into a literal
+`object` node), so the rule may fire on a case that in fact sets
+`allowedTools` dynamically; `allowedTools: []` reads as *present* (the same
+`node.Value != nil` / `Children != nil` tri-state gap OAI-115 and
+CSDK-204/CSDK-205 all carry), silencing the rule on an explicitly-empty
+allow-list that is functionally identical to having none; and a
+`const mcp = hostedMcpTool({...})` referenced by identifier in `tools: [mcp]`
+resolves onto `AgentDef.ToolRefs`, not `HostedToolRefs` — the hosted-tool
+classification only recognizes a `hostedMcpTool(...)` call written directly
+inline in the `tools:` array — so a hoisted binding escapes this rule
+entirely.
+
 ---
 
 ## What this policy does not cover
@@ -186,16 +271,24 @@ identical to having none.
   an allow-list padded wider than the task needs.
 - `output_guardrails` gaps for MCP-fetched content (an egress concern; see
   agent_safety OAI-110 for the content-fetch output-guardrail rule).
-- OAI-115 does not evaluate `require_approval` at all — a `HostedMCPTool`
-  with `require_approval: "never"` and no `allowed_tools` is the most exposed
-  combination this policy can see, and it fires the same as any other missing
-  `allowed_tools` case rather than at elevated severity. A dedicated
-  `require_approval` rule is a natural follow-up, not yet built.
-- TypeScript agents that call the `@openai/agents` `hostedMcpTool(...)`
-  factory are undetected by OAI-115 — TS discovery recognizes the factory
-  call but does not currently capture its arguments onto the resulting
-  `HostedToolDef`, so no OpenAI Agents TS pack rule can inspect
-  `tool_config` yet.
+- Neither OAI-115 nor OAI-116 evaluates `require_approval` / `requireApproval`
+  as its own condition — a hosted MCP tool with approval disabled *and* no
+  allow-list is the most exposed combination either policy can see, and it
+  fires the same as any other missing-allow-list case rather than at elevated
+  severity. A dedicated `require_approval`/`requireApproval` rule is a natural
+  follow-up, not yet built (OAI-116's confidence already accounts for the
+  TS SDK's `'never'` default in its rationale, but does not fire a
+  *separate* finding for it).
+- OAI-116 does not resolve a hoisted `const mcp = hostedMcpTool({...})`
+  referenced by identifier in `tools: [mcp]` — that shape lands on
+  `AgentDef.ToolRefs`, not `HostedToolRefs`, so the rule never sees it. Only
+  a `hostedMcpTool(...)` call written directly inline inside the `tools:`
+  array is recognized.
+- OAI-116 does not capture a `hostedMcpTool({...})` options object built from
+  a variable or a `...spread` rather than an object literal — `TSObjectKwargs`
+  only descends into a literal `object` node, so such a call is treated as
+  having no kwargs and fires even if `allowedTools` is in fact set
+  dynamically.
 
 ---
 
@@ -252,3 +345,31 @@ agent = Agent(
    tools are reachable, `require_approval` bounds *whether each call*
    executes without a human in the loop; the two are complementary, not
    substitutes for each other.
+
+The TypeScript SDK is the same fix, flat options instead of a nested dict —
+and here `requireApproval` needs to be set explicitly, since omitting it does
+not fall back to a safer default the way Python's does:
+
+```ts
+import { Agent } from "@openai/agents";
+import { hostedMcpTool } from "@openai/agents-core";
+
+export const research = new Agent({
+  name: "research",
+  instructions: "Answer questions using the deepwiki MCP server",
+  tools: [
+    hostedMcpTool({
+      serverLabel: "deepwiki",
+      serverUrl: "https://mcp.deepwiki.com/mcp",
+      allowedTools: ["ask_question"],
+      requireApproval: "always",
+    }),
+  ],
+});
+```
+
+6. Add `allowedTools` to every `hostedMcpTool({...})` call, naming only the
+   tools this agent's task actually needs.
+7. Set `requireApproval` explicitly rather than leaving it unset — an omitted
+   `requireApproval` is not a safe default in this SDK, it is silently
+   rewritten to `'never'` inside `hostedMcpTool` itself.
