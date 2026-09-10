@@ -18,6 +18,11 @@ rules:
     confidence: 0.75
     scope: agent
     fix_type: config
+  - id: OAI-117
+    severity: medium
+    confidence: 0.65
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06]
 ---
 
@@ -25,8 +30,8 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `openai_sdk_mcp_safety`  
 **File:** `openai_sdk/mcp_safety.yaml`  
-**Rules:** OAI-106, OAI-115, OAI-116  
-**Severities:** high  
+**Rules:** OAI-106, OAI-115, OAI-116, OAI-117  
+**Severities:** high, medium  
 **Fix types:** config  
 **References:** LLM01, LLM06
 
@@ -57,6 +62,14 @@ Two related but distinct gaps in how an OpenAI Agents SDK agent wires MCP:
   `allowedTools` sits directly on the factory call, with no `tool_config` /
   `toolConfig` wrapper — so the kwarg path has one segment where Python's has
   two.
+- **OAI-117** — a distinct, independent gap on the same TS `hostedMcpTool`
+  construct: options that omit `requireApproval` entirely. The match is
+  `agent_uses_hosted_tool_class: [hostedMcpTool]` AND NOT
+  `agent_hosted_tool_kwarg_present: {class: hostedMcpTool, kwarg:
+  requireApproval}` — same shape as OAI-116, different kwarg, and
+  deliberately not combined with OAI-116's `allowedTools` check: an agent can
+  set one control correctly and still be missing the other, so the two fire
+  independently and can both land on the same `hostedMcpTool(...)` call.
 
 ---
 
@@ -257,6 +270,72 @@ classification only recognizes a `hostedMcpTool(...)` call written directly
 inline in the `tools:` array — so a hoisted binding escapes this rule
 entirely.
 
+### OAI-117 — TypeScript agent wires a hostedMcpTool with no requireApproval setting (Severity: medium, Confidence: 0.65, Fix type: config)
+
+**What we detect:** an agent whose `HostedToolRefs` include a resolved
+`hostedMcpTool` factory call (`agent_uses_hosted_tool_class: [hostedMcpTool]`)
+where `requireApproval` is not present on that call's captured options
+(`not: agent_hosted_tool_kwarg_present {class: hostedMcpTool, kwarg:
+requireApproval}`). This is the single-segment flat-options lookup, same
+mechanism as OAI-116's `allowedTools` check, on a different key. A
+`hostedMcpTool()` call with no options object at all also fires, for the same
+reason OAI-115/OAI-116 fire on a bare call: no kwargs is the same absence of
+a setting as an options object that omits the key. The rule is intentionally
+independent of OAI-116 — it does not check `allowedTools` at all, so an
+agent that sets `allowedTools` correctly but omits `requireApproval` fires
+this rule and stays silent on OAI-116, and an agent that omits both fires
+both rules on the same call site.
+
+**Why it is flaggable:** verified directly in `hostedMcpTool`'s
+implementation (`packages/agents-core/src/tool.ts`, both the `serverUrl` and
+`connectorId` branches): the factory checks `typeof options.requireApproval
+=== 'undefined' || options.requireApproval === 'never'` and, when true,
+writes `require_approval: 'never'` into the wire payload sent to the
+Responses API. Omitting the option is not "leave it unset" — it is
+indistinguishable, at the API boundary, from writing `requireApproval:
+'never'` by hand. That silently inverts the Responses API's own platform
+default (approval-required), so code that never mentions approval at all
+ends up less gated than the API's baseline behavior, with nothing in the
+source signaling that a human-in-the-loop check has been turned off.
+
+**Real-world consequence:** an agent wired to a hosted MCP server for
+"documentation lookups," with a correctly-scoped `allowedTools` list and no
+`requireApproval` set, auto-executes every one of those allowed tools with no
+confirmation step — including a rename or version bump on the server side
+that reinterprets an allowed tool name to do something more consequential
+than the reviewer who wrote the allow-list intended. The allow-list bounds
+*which* tool names are reachable; it does not bound *whether* a call to one
+of them executes unattended.
+
+**Why severity is medium and not high (unlike OAI-115/OAI-116):** the
+consequence differs in kind from the allow-list gap, not just in degree.
+Absent `allowedTools` produces an unbounded, non-enumerable tool surface — a
+reviewer cannot even list what the agent can call. Absent `requireApproval`
+produces a bounded surface (when `allowedTools` is also set) that simply
+executes without a human checkpoint — still auditable from source, just
+missing a runtime gate. Stacking two `high` findings on every under-specified
+`hostedMcpTool(...)` call would also overstate a single construct's risk;
+medium keeps the two rules' combined signal proportionate to each control's
+actual contribution.
+
+**Fix type — config:** set `requireApproval` explicitly on the
+`hostedMcpTool({...})` call's options — wiring, not tool-body code.
+
+**Confidence 0.65 — below both OAI-115 and OAI-116:** the mechanism is
+certain (verified in SDK source, not inferred), but the predicate cannot see
+a real and common benign-fire path: a hosted MCP server that is genuinely
+read-only (a documentation or search lookup, the same `deepwiki` shape used
+throughout this policy's own examples) has no side effect for approval to
+gate, and `requireApproval: 'never'` is the *correct*, deliberately-chosen
+setting for it — indistinguishable from the negligent-omission case using
+only the AST. The discount is sized for that specific ambiguity, not for
+any weakness in the mechanical claim. The false-positive/false-negative
+gaps otherwise mirror OAI-116's: a `hostedMcpTool({...})` call built from a
+spread or a variable rather than an object literal is not captured; and a
+`const mcp = hostedMcpTool({...})` referenced by identifier in `tools: [mcp]`
+resolves onto `AgentDef.ToolRefs`, not `HostedToolRefs`, so a hoisted binding
+escapes this rule entirely, same as OAI-116.
+
 ---
 
 ## What this policy does not cover
@@ -271,14 +350,27 @@ entirely.
   an allow-list padded wider than the task needs.
 - `output_guardrails` gaps for MCP-fetched content (an egress concern; see
   agent_safety OAI-110 for the content-fetch output-guardrail rule).
-- Neither OAI-115 nor OAI-116 evaluates `require_approval` / `requireApproval`
-  as its own condition — a hosted MCP tool with approval disabled *and* no
-  allow-list is the most exposed combination either policy can see, and it
-  fires the same as any other missing-allow-list case rather than at elevated
-  severity. A dedicated `require_approval`/`requireApproval` rule is a natural
-  follow-up, not yet built (OAI-116's confidence already accounts for the
-  TS SDK's `'never'` default in its rationale, but does not fire a
-  *separate* finding for it).
+- OAI-115 does not evaluate `require_approval` as its own condition — a
+  Python `HostedMCPTool` with approval disabled *and* no allow-list is the
+  most exposed combination the rule can see, and it fires the same as any
+  other missing-allow-list case rather than at elevated severity. Python's
+  benign platform-default fallback (approval-required when the key is
+  omitted) means there is no equivalent TS-style verifiable-omission gap to
+  build a parallel rule from — see the language-gating discussion above.
+- OAI-117 does not fire on an *explicit* `requireApproval: 'never'` — only on
+  omission. The two are byte-identical at the wire-payload level (verified
+  in SDK source), but an explicit `'never'` is a reviewable, deliberate
+  choice, and this policy's own OAI-116 fix guidance already tells authors
+  to "set requireApproval explicitly" — flagging the explicit form would
+  penalize following that advice. A rule on the explicit form, if ever
+  added, is a distinct next rule (OAI-118), not a widening of OAI-117.
+- Neither OAI-116 nor OAI-117 combines its check with the other's — an agent
+  missing both `allowedTools` and `requireApproval` fires both findings on
+  the same `hostedMcpTool(...)` call rather than one elevated finding. This
+  is deliberate (see "What this policy covers" above): the two are distinct
+  controls (catalog scope vs. runtime execution gate), and folding them into
+  one finding would lose the ability to report a repo that has fixed only
+  one of the two.
 - OAI-116 does not resolve a hoisted `const mcp = hostedMcpTool({...})`
   referenced by identifier in `tools: [mcp]` — that shape lands on
   `AgentDef.ToolRefs`, not `HostedToolRefs`, so the rule never sees it. Only
