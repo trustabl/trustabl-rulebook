@@ -170,13 +170,27 @@ are a primary prompt-injection vector with no SDK-level filtering.
 **Confidence 0.8:** Some subagents genuinely need search; the grant alone is a
 strong but not certain signal.
 
-### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions (Severity: critical, Confidence: 0.9, Fix type: config)
+### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions with a broad tool set (Severity: critical, Confidence: 0.9, Fix type: config)
 
-**What we detect:** `permissionMode="bypassPermissions"` on the AgentDefinition
-(`agent_kwarg_value`).
+**What we detect:** `permissionMode="bypassPermissions"` on the
+AgentDefinition (`agent_kwarg_value`), combined (`match: all:`) with either
+`tools` being omitted (`agent_kwarg_missing: [tools]` — inherits every tool
+available to subagents) or `tools` granting a side-effecting/exfiltration-
+capable built-in (`agent_grants_builtin_tool`: Bash, Write, Edit,
+NotebookEdit, WebFetch, WebSearch, Agent, Task). A genuinely read-only
+`tools` list (e.g. `["Read", "Grep", "Glob"]`) now silences the rule. This
+co-check was added after an outreach-feedback investigation into whether
+`bypassPermissions` should be softened based on tool scope: unlike
+`ClaudeAgentOptions.allowed_tools` (which only auto-approves and does not
+restrict — see [repo.md](repo.md)), `AgentDefinition.tools` genuinely
+restricts an agent — "a tool you leave out isn't in the subagent's session
+at all," per the Agent SDK's own reference — so this is the one place a
+tool-scope co-check on `bypassPermissions` is actually sound.
 
 **Why it is flaggable:** It disables the interactive approval gate for *every*
-tool the subagent runs — the one control between model output and side effects.
+tool the subagent runs — the one control between model output and side
+effects — and the subagent's `tools` list is broad enough (or unset,
+defaulting to broad) for that to matter.
 
 **Real-world consequence:** A bypass subagent holding `Bash`/`Write` executes
 model-chosen commands and file writes unattended; a single injection becomes an
@@ -195,11 +209,16 @@ CSDK-201/202 flag when bypass is set at the session level (see
 [repo.md](repo.md)), and it carries the same critical classification there:
 severity follows the end state, not the declaration site.
 
-**Fix type — config:** Drop the kwarg or set `default`/`acceptEdits`; reserve
-bypass for sandboxed, non-interactive contexts.
+**Fix type — config:** Drop the kwarg or set `default`/`acceptEdits`; if
+autonomous operation is required, scope `tools` to the minimal read-only set
+the subagent needs (e.g. `Read`, `Grep`, `Glob`) so bypass has nothing
+side-effecting to bypass approval for.
 
-**Confidence 0.9:** The literal value is unambiguous; the small gap is the genuinely
-sandboxed CI case where bypass is defensible.
+**Confidence 0.9:** The literal `permissionMode` value is unambiguous; the
+small gap is the genuinely sandboxed CI case where bypass is defensible.
+False negative: a `bypassPermissions` subagent whose `tools` list is
+genuinely read-only now goes silent by design — that combination has no
+side-effecting capability for the bypass to matter against.
 
 ### CSDK-104 — Subagent is granted filesystem-write built-ins (Severity: high, Confidence: 0.8, Fix type: config)
 
@@ -244,20 +263,26 @@ allowlists hosts and blocks internal ranges (see also [ssrf.md](ssrf.md)).
 
 **Confidence 0.75:** Legitimate fetch use is frequent; treat as a review prompt.
 
-### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions (Severity: critical, Confidence: 0.9, Fix type: config)
+### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions with a broad tool set (Severity: critical, Confidence: 0.9, Fix type: config)
 
 **What we detect:** A TypeScript `AgentDefinition` with the kwarg
 `permissionMode: "bypassPermissions"` (predicate `agent_kwarg_value`, matching
-kwarg `permissionMode` against the literal value `bypassPermissions`). This is the
-TypeScript twin of the Python rule
-[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-severity-critical-confidence-09-fix-type-config);
-the predicate reads the value directly off the constructor.
+kwarg `permissionMode` against the literal value `bypassPermissions`),
+combined (`match: all:`) with the same `tools`-scope co-check as CSDK-103:
+either `tools` is omitted (inherits every tool available to subagents) or it
+grants a side-effecting/exfiltration-capable built-in (Bash, Write, Edit,
+NotebookEdit, WebFetch, WebSearch, Agent, Task). This is the TypeScript twin
+of the Python rule
+[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-with-a-broad-tool-set-severity-critical-confidence-09-fix-type-config);
+see that entry for why the `tools` co-check is sound here where an
+`allowed_tools` co-check on `ClaudeAgentOptions` (repo scope) would not be.
 
 **Why it is flaggable:** It disables the SDK's interactive approval gate for
 *every* tool the agent runs — the one in-band control between model output and a
-real side effect. An agent dispatched autonomously on a model-generated task
-description then reaches its tools (including `Bash`, `Write`, `Edit`) with no
-per-call confirmation.
+real side effect — and the agent's `tools` are broad enough (or unset,
+defaulting to broad) for that to matter. An agent dispatched autonomously on a
+model-generated task description then reaches its tools (including `Bash`,
+`Write`, `Edit`) with no per-call confirmation.
 
 **Real-world consequence:** A bypass agent holding `Bash`/`Write` executes
 model-chosen commands and file writes unattended; a single prompt-injected
@@ -275,16 +300,24 @@ TypeScript (this rule), or at the session level (CSDK-201/202, repo scope), so
 all four carry critical.
 
 **Fix type — config:** Drop the kwarg or set a safe mode (`"default"` /
-`"acceptEdits"`), and restrict the tool surface with `allowedTools` /
-`disallowedTools` in the constructor — a wiring change on the `AgentDefinition`,
-not a change to any tool's source.
+`"acceptEdits"`); if autonomous operation is required, scope `tools` to the
+minimal read-only set the agent needs (e.g. `Read`, `Grep`, `Glob`) — or pass
+`disallowedTools` naming what it must never call — so bypass has nothing
+side-effecting left to bypass approval for. (`AgentDefinition` has no
+`allowedTools` field — that auto-approve-only kwarg exists on
+`ClaudeAgentOptions`/`query(...) options`, a different construct; the
+correction to this doc's earlier text was made in the same pass that added
+the co-check.) A wiring change on the `AgentDefinition`, not a change to any
+tool's source.
 
-**Confidence 0.9:** The literal value is unambiguous, so the false-positive surface
-is small; the residual gap is the genuinely sandboxed, non-interactive context (CI
-with no secrets or network) where bypass is a defensible choice. Matches the
-Python sibling CSDK-103's 0.9. A false negative remains for the session-level
+**Confidence 0.9:** The literal `permissionMode` value is unambiguous, so the
+false-positive surface is small; the residual gap is the genuinely sandboxed,
+non-interactive context (CI with no secrets or network) where bypass is a
+defensible choice. Matches the Python sibling CSDK-103's 0.9. False
+negatives: a `bypassPermissions` agent with a genuinely read-only `tools`
+list now goes silent by design (see CSDK-103), and the session-level
 `permissionMode` set on `ClaudeAgentOptions`/`query(...)` rather than on the
-`AgentDefinition` — that is a separate detection surface, not covered here.
+`AgentDefinition` remains a separate detection surface, not covered here.
 
 ### CSDK-121 — TypeScript AgentDefinition is granted the Bash tool (Severity: high, Confidence: 0.8, Fix type: config)
 
@@ -509,7 +542,12 @@ cover.
 - Hook coverage: a PreToolUse hook may already gate the granted tool, which the
   static grant check cannot see (a false positive).
 - The `permissionMode` set at the `ClaudeAgentOptions` session level rather than on
-  the AgentDefinition — that is CSDK-202 (see [repo.md](repo.md)).
+  the AgentDefinition — that is CSDK-202/206 (see [repo.md](repo.md)).
+- A `bypassPermissions` AgentDefinition/agent whose `tools` list is genuinely
+  read-only (e.g. `["Read", "Grep", "Glob"]`). CSDK-103/CSDK-120 deliberately
+  go silent on this shape — there is no side-effecting capability for the
+  bypass to matter against — by design, not as an oversight; see those
+  entries for the co-check this replaced a bare `permissionMode` check with.
 - For CSDK-130/131: a built-in granted to the `query()` main thread through a
   non-literal `options.allowedTools` (a variable the static read cannot resolve),
   and any of these capabilities delivered through a custom (non-built-in) tool —

@@ -23,6 +23,11 @@ rules:
     confidence: 0.7
     scope: repo
     fix_type: config
+  - id: CSDK-206
+    severity: medium
+    confidence: 0.6
+    scope: repo
+    fix_type: config
 references: [LLM06, LLM10]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM06, LLM10]
 
 **Policy ID:** `claude_sdk_repo`  
 **File:** `claude_sdk/repo.yaml`  
-**Rules:** CSDK-201, CSDK-202, CSDK-204, CSDK-205  
-**Severities:** high, high, low, medium  
-**Fix types:** config, config, config, config  
+**Rules:** CSDK-201, CSDK-202, CSDK-204, CSDK-205, CSDK-206  
+**Severities:** high, high, low, medium, medium  
+**Fix types:** config, config, config, config, config  
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -41,14 +46,14 @@ references: [LLM06, LLM10]
 
 Repo-scope rules for project-wide Claude Agent SDK session configuration
 posture: two flavors of approval gating, one flavor of execution bounding,
-and one flavor of tool-surface bounding.
+and two flavors of tool-surface bounding.
 
 Approval gating: the posture declared in `.claude/settings.json` /
-`settings.local.json` (predicate `repo_claude_default_mode_is`) and the
-posture set in code on a `ClaudeAgentOptions(...)` session object (predicate
-`repo_claude_options_permission_mode_is`). Both fire once per scan, not per
-tool or per agent. Each rule fires when the respective `bypassPermissions`
-value is present.
+`settings.local.json` (predicate `repo_claude_default_mode_is`, CSDK-201) and
+the posture set in code on a `ClaudeAgentOptions(...)` session object,
+correlated with whether that same construction sets a `disallowed_tools`
+deny-list (predicate `repo_claude_options_mode_without_kwarg`, CSDK-202/206 —
+see below). Both fire once per scan, not per tool or per agent.
 
 Execution bounding: whether any `ClaudeAgentOptions(...)` construction in the
 project sets an explicit `max_turns` (predicate
@@ -59,10 +64,15 @@ Tool-surface bounding: whether a `ClaudeAgentOptions(...)` construction that
 sets `permission_mode="acceptEdits"` is paired with an explicit
 `disallowed_tools` deny-list (predicates
 `repo_claude_options_permission_mode_is: [acceptEdits]` combined with
-`repo_claude_options_disallowed_tools_missing`). This is a distinct mechanism
-from the other two: Claude SDK's `allowed_tools` only auto-approves listed
-tools, it does not restrict which tools can run, so `disallowed_tools` is the
-only construct in this SDK that actually narrows the tool surface.
+`repo_claude_options_disallowed_tools_missing`, CSDK-205), and — the same
+mechanism, now correlated per construction site instead of repo-wide —
+whether a `bypassPermissions` construction is paired with `disallowed_tools`
+(predicate `repo_claude_options_mode_without_kwarg`, CSDK-202/206). Both are a
+distinct mechanism from `max_turns`: Claude SDK's `allowed_tools` only
+auto-approves listed tools, it does not restrict which tools can run, so
+`disallowed_tools` is the only construct in this SDK that actually narrows
+the tool surface — see "What this policy does not cover" for why an
+allow-list-scope reading of CSDK-202 was considered and rejected.
 
 ---
 
@@ -130,43 +140,121 @@ are rare — limited to a settings file that is present but unused (e.g. an exam
 config not loaded by the running agent). False negatives: a bypass set only at
 runtime via the SDK rather than in settings is CSDK-202's job, not this rule's.
 
-### CSDK-202 — Session permission mode bypasses approvals (Severity: high, Confidence: 0.9, Fix type: config)
+### CSDK-202 — Session permission mode bypasses approvals with no tool deny-list (Severity: high, Confidence: 0.9, Fix type: config)
 
 **What we detect:**
-A `ClaudeAgentOptions(...)` construction in code that sets
-`permission_mode="bypassPermissions"` (predicate
-`repo_claude_options_permission_mode_is: [bypassPermissions]`).
+A SINGLE `ClaudeAgentOptions(...)` construction in code that both sets
+`permission_mode="bypassPermissions"` and does not set `disallowed_tools` at
+that same site (predicate `repo_claude_options_mode_without_kwarg: {modes:
+[bypassPermissions], kwarg: disallowed_tools}`). This correlates both facts
+at the SAME construction site — unlike a repo-wide reading of the two facts
+independently, which would silently go quiet on a project with two options
+objects (one safe with a deny-list, one `bypassPermissions` without one). An
+`Opaque` construction (built with `**` unpacking) that sets a matching
+`permission_mode` still counts as missing `disallowed_tools`: a deny-list
+hidden inside the unpacked dict is not one this engine can see, so it is not
+credited as a mitigation for that specific site.
 
 **Why it is flaggable:**
 This is the in-code, session-level form of the `settings.json` `defaultMode`
-bypass, and it is where most applications actually enable it. The session turns
-off Claude Code's approval prompts, so every tool the agent can call runs with
-no human in the loop.
+bypass, and it is where most applications actually enable it. The session
+turns off Claude Code's approval prompts, so every tool the agent can call
+runs with no human in the loop — and with no `disallowed_tools` deny-list,
+nothing else bounds which tools that includes. `allowed_tools` does not help
+here: per the Agent SDK's own reference docs, it only auto-approves tools, it
+does not restrict which ones can run, so an empty or narrowly-scoped
+`allowed_tools` alongside `bypassPermissions` is not a mitigating factor — it
+is the maximally dangerous shape, since every unlisted tool still runs, now
+with no prompt either. (This distinction was investigated directly against
+outreach feedback proposing the opposite reading — see "What this policy
+does not cover.")
 
 **Real-world consequence:**
 An application that constructs
-`ClaudeAgentOptions(permission_mode="bypassPermissions")` ships an agent that
-acts without confirmation wherever it runs — a server handling untrusted user
-input, or a desktop app on an end-user's machine. One injected instruction
-becomes an unguarded action with the process's full privileges.
+`ClaudeAgentOptions(permission_mode="bypassPermissions")` with no deny-list
+ships an agent that acts without confirmation, on any tool it can reach,
+wherever it runs — a server handling untrusted user input, or a desktop app
+on an end-user's machine. One injected instruction becomes an unguarded
+action with the process's full privileges, and a narrow `allowed_tools` list
+someone added believing it was a safety net does nothing to stop it.
 
 **Why severity is high and not medium:**
-Identical blast radius to CSDK-201 — the approval control is gone for every tool
-— and it executes in production paths, not just developer clones. Not critical
-for the same reason: the bypass is the enabling condition, not the exploit
-itself.
+Identical blast radius to CSDK-201 — the approval control is gone for every
+unlisted tool — and it executes in production paths, not just developer
+clones. Not critical for the same reason: the bypass is the enabling
+condition, not the exploit itself.
 
 **Fix type — config:**
-Drop the kwarg or set it to `default` / `acceptEdits`. It is a constructor
-argument change, not a tool-logic change. Reserve `bypassPermissions` for
-disposable sandboxes, never code that runs on a developer's or user's machine.
+Drop the kwarg or set it to `default` / `acceptEdits`, or — if
+`bypassPermissions` is genuinely required — pass `disallowed_tools=` naming
+at minimum shell execution and anything that reaches the network or
+credentials; `disallowed_tools` denies matching calls in every permission
+mode, including `bypassPermissions`, so it is the one control that still
+bounds the surface. It is a constructor argument change, not a tool-logic
+change. Reserve `bypassPermissions` for disposable sandboxes, never code
+that runs on a developer's or user's machine.
 
 **Confidence 0.9:**
-The match reads the literal `permission_mode` value off the parsed
-`ClaudeAgentOptions` call. False positives are limited to dead code (an options
-object built but never used) or a value overridden elsewhere at runtime; false
-negatives include a mode passed via a variable the scanner cannot resolve to a
-literal.
+The match reads the literal `permission_mode` value and the `disallowed_tools`
+presence off the parsed `ClaudeAgentOptions` call, at the same site. False
+positives are limited to dead code (an options object built but never used)
+or a value overridden elsewhere at runtime; false negatives include a mode
+passed via a variable the scanner cannot resolve to a literal, and a
+construction that sets `disallowed_tools=[]` or `disallowed_tools=None`,
+which still reads as "set" and silences the rule (the same tri-state gap
+CSDK-204/205 have for their own absence checks).
+
+### CSDK-206 — Session bypasses approvals with a deny-list that still leaves a broad surface (Severity: medium, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+The complementary case to CSDK-202: a `ClaudeAgentOptions(...)` construction
+that sets `permission_mode="bypassPermissions"` AND sets `disallowed_tools`
+at that same site (predicate `repo_claude_options_permission_mode_is:
+[bypassPermissions]` combined with `not: repo_claude_options_mode_without_kwarg`
+on the same modes/kwarg). Exactly one of CSDK-202/CSDK-206 fires per
+`bypassPermissions` site — they are mutually exclusive by construction.
+
+**Why it is flaggable:**
+`disallowed_tools` denies matching calls in every permission mode, including
+`bypassPermissions`, so a deny-list present at this site is a real,
+SDK-enforced bound — not just an auto-approve list a developer might mistake
+for one. The residual risk is what the deny-list does not name: every tool
+not on it still runs with no human approval step at all, because
+`bypassPermissions` is otherwise unconditional. A deny-list is allow-by-
+default; its safety is exactly as good as the completeness of what it
+excludes, which this rule cannot evaluate.
+
+**Real-world consequence:**
+A `bypassPermissions` session with `disallowed_tools=["Bash"]` still lets a
+prompt-injected task fetch arbitrary URLs, write arbitrary files, or call any
+other tool the session can reach — the developer addressed the shell-execution
+risk they thought of, not the full tool surface. This is a real but narrower
+gap than CSDK-202's: the SDK is doing some of the work, just possibly not
+enough.
+
+**Why severity is medium and not high:**
+Lower than CSDK-202 because a real, SDK-enforced restriction is present — the
+developer took the one action that genuinely bounds `bypassPermissions`, they
+just may not have bounded it completely. Comparable to CSDK-205 (medium),
+which flags the same "some risk removed, more may remain" shape for
+`acceptEdits`.
+
+**Fix type — config:**
+Review the `disallowed_tools` list against every tool the session can reach,
+confirming it denies shell execution and anything touching the network or
+credentials, not just an obvious tool or two. If the session's real tool
+needs are narrow, prefer naming them explicitly and using a non-bypass
+`permission_mode` ("default" or "acceptEdits") instead of relying on
+`bypassPermissions` plus a deny-list to cover everything else. Constructor
+argument change, not a tool-logic change.
+
+**Confidence 0.6:**
+Lower than CSDK-202 (0.9) because the finding cannot evaluate whether the
+present deny-list is actually adequate — a `disallowed_tools=["Bash"]` next
+to no other side-effecting tool wired into the session is a materially
+different risk than the same list next to a `WebFetch`/`Write`-heavy tool
+set, and this rule cannot see that context. It also inherits the same
+literal-value and Opaque-construction resolution limits as CSDK-202.
 
 ### CSDK-204 — Claude Agent SDK session sets no explicit max_turns limit (Severity: low, Confidence: 0.6, Fix type: config)
 
@@ -290,9 +378,28 @@ since discovery of `ClaudeAgentOptions(...)` is Python-only today.
   Auto-approving file edits is a narrower risk these rules deliberately do not
   flag on its own, since shell and network actions still prompt — CSDK-205
   only fires on the combination of `acceptEdits` *and* no deny-list.
-- `allowed_tools` (with or without contents). It only auto-approves; it never
-  narrows the tool surface in this SDK, so an empty or absent `allowed_tools`
-  is not itself a finding — see the CSDK-205 rationale above.
+- `allowed_tools` (with or without contents), on its own, at any severity.
+  **This was investigated directly, prompted by outreach feedback proposing
+  the opposite reading** — that a `bypassPermissions` session with an empty
+  or narrowly-scoped `allowed_tools` should be treated as lower-risk or
+  exempted from CSDK-201/202. That premise does not survive the Agent SDK's
+  own reference docs: `allowed_tools` is described as "auto-approve without
+  prompting… this does not restrict Claude to only these tools" — unlisted
+  tools fall through to `permission_mode`, so an empty/narrow `allowed_tools`
+  next to `bypassPermissions` is the *maximally* dangerous shape (every tool
+  runs, none prompt), not a mitigated one. `allowed_tools` never narrows the
+  tool surface in this SDK, so it is not read as a signal in either
+  direction; `disallowed_tools` is the only construct here that does, which
+  is exactly the correlation CSDK-202/206 make. See
+  `docs/decisions/tool-allowlist-scope.md` in the engine repo.
+- CSDK-202's own `Opaque`-site behavior differs from CSDK-204/CSDK-205's, by
+  design: `repo_claude_options_mode_without_kwarg` does NOT skip `Opaque`
+  constructions, so an unpack-built `bypassPermissions` site with no visible
+  `disallowed_tools` still fires. `repoClaudeOptionsMissingKwarg` (behind
+  CSDK-204/205) does skip them, because that helper answers "is any kwarg
+  missing anywhere in the repo" (an unreadable site could be the one that
+  sets it) rather than "is this specific risky site unmitigated" (an
+  unreadable deny-list is not a mitigation).
 - Per-tool allow/deny lists in `settings.json` (`permissions.allow` /
   `deny` / `ask`) that grant broad authority without flipping `defaultMode` —
   a separate settings-permission policy would cover that surface.
