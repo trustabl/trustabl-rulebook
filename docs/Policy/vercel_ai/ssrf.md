@@ -83,11 +83,19 @@ shell/eval rules.
 
 ---
 
+## Allow-list credit
+
+VAI-003 used to fire on every non-literal destination, including tools that had already constrained the host, which made the rule a false-positive source for exactly the code that followed its own fix advice. The match is now `has_dynamic_url_call` **and not** a recognized host allow-list in the tool body. Severity, confidence and scope are unchanged.
+
+**TypeScript (VAI-003).** The rule is silenced when the handler both reads a host (`.hostname` / `.host`) and tests membership (`.includes(` / `.has(`), or references a named allow-list (`allowedHosts`, `allowedDomains`, `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `hostAllowlist`). Reading `new URL(x).hostname` with no membership test does not silence it.
+
+The credit is textual and body-local. It does not verify that the allow-list is correct, that the check runs before the request, or that the request cannot be redirected to a host outside it; HTTPS-only enforcement and a redirect cap are recommended in each rule's fix text but are not separately detected.
+
+---
+
 ## What this policy does not cover
 
-- A request whose URL is dynamic but already validated against an allow-list
-  inside the handler — the fact cannot see the guard, so it fires anyway (a known
-  false positive, and the main reason confidence is 0.75).
+- A request whose URL is dynamic but already validated against an allow-list inside the handler under a name the fact does not recognize — the credit only sees the names listed under Allow-list credit, so it still fires (a known false positive, and part of why confidence is 0.75).
 - A fetch assembled in a helper in another module — discovery sees the handler, so
   a wrapper elsewhere escapes the fact.
 - DNS-rebinding and time-of-check/time-of-use attacks against an allow-list that
@@ -98,6 +106,7 @@ shell/eval rules.
   gap.
 - Exfiltration or internal access through non-HTTP primitives (raw sockets, DNS)
   belongs to other concerns.
+- An allow-list enforced in a helper or middleware outside the tool body, an allow-list check that uses a name outside the recognized set, and a membership test that is unrelated to the URL host but happens to sit beside a `.host` read (TypeScript over-credit). Redirects and non-HTTPS schemes are not detected.
 
 ---
 

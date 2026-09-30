@@ -18,6 +18,11 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
+  - id: LC-113
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
 references: [LLM06, LLM10]
 ---
 
@@ -25,9 +30,9 @@ references: [LLM06, LLM10]
 
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
-**Rules:** LC-101, LC-102, LC-111
-**Severities:** critical, low, low
-**Fix types:** code, config, config
+**Rules:** LC-101, LC-102, LC-111, LC-113
+**Severities:** critical, low, low, low
+**Fix types:** code, config, config, config
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -108,6 +113,43 @@ timeout, or guarded by a custom loop is over-flagged.
 
 **Severity low / Confidence 0.6:** same profile as LC-102.
 
+### LC-113 — AgentExecutor has no explicit max_execution_time limit (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+A Python `AgentExecutor` with no effective `max_execution_time` kwarg (absent or an
+explicit `None`; predicate `agent_kwarg_missing`). It is the wall-clock companion to
+LC-102 and reads the same constructor.
+
+**Why it is flaggable:**
+`max_iterations` (LC-102) counts tool round-trips, not seconds. One iteration that
+blocks on a slow tool or a stalled model call is not counted, so the run can hang or
+stretch well past any latency budget while holding tools and credentials live
+(LLM10, Unbounded Consumption). `max_execution_time` is the executor's native
+wall-clock cap.
+
+**Real-world consequence:**
+A support agent's lookup tool waits on an unresponsive internal API; the executor
+sits inside iteration 2 of 15 for minutes, the request thread is pinned, and the
+front end times out while the agent keeps running.
+
+**Why severity is low and not medium:**
+The impact is latency, availability and cost, bounded by external supervision; the
+rule grants nothing new to the model and is a hygiene nudge that mirrors LC-102's
+low.
+
+**Fix type — config:**
+One constructor kwarg, no tool source changes.
+
+**Confidence 0.6:**
+**False positives:** an executor wrapped by an external timeout, or whose tools each
+carry a timeout that already bounds every step, is over-flagged, as is
+`AgentExecutor(**cfg)` (the predicate does not consult the opaque flag). **False
+negatives:** the check is presence-only, so an enormous value passes.
+`create_react_agent` / `create_agent` graphs are out of scope because they are
+bounded by the graph's recursion limit rather than this kwarg. The TypeScript
+`AgentExecutor` is deliberately not covered: no `maxExecutionTime` option could be
+verified for LangChain.js, and the rule will not advise an option that may not exist.
+
 ---
 
 ## What this policy does not cover
@@ -117,6 +159,8 @@ as hosted edges but not yet a dedicated agent rule), v1 `create_agent` middlewar
 quality, and whether a code-execution tool is *actually* sandboxed out of band. The
 iteration rules check `AgentExecutor` only — `create_react_agent` / `create_agent`
 enforce their own recursion limit differently and are out of scope here.
+- For LC-113: wall-clock limits enforced outside the executor, and the TypeScript
+  `AgentExecutor` (no verified equivalent option, so no rule ships).
 
 ---
 
