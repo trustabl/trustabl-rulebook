@@ -18,6 +18,11 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
+  - id: LC-114
+    severity: medium
+    confidence: 0.6
+    scope: agent
+    fix_type: code
 references: [LLM06, LLM10]
 ---
 
@@ -25,9 +30,9 @@ references: [LLM06, LLM10]
 
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
-**Rules:** LC-101, LC-102, LC-111
-**Severities:** critical, low, low
-**Fix types:** code, config, config
+**Rules:** LC-101, LC-102, LC-111, LC-114
+**Severities:** critical, low, low, medium
+**Fix types:** code, config, config, code
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -108,6 +113,42 @@ timeout, or guarded by a custom loop is over-flagged.
 
 **Severity low / Confidence 0.6:** same profile as LC-102.
 
+### LC-114 — LangGraph StateGraph is compiled with no checkpointer (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a `StateGraph(...)` / `MessageGraph(...)` builder whose
+`.compile(...)` call discovery resolved through a named builder variable
+(`agent_kwargs_observed: true`), that sets no `checkpointer` (`agent_kwarg_missing`,
+which also treats an explicit `checkpointer=None` as missing), in a repo that ships
+no `langgraph.json` (`repo_langgraph_platform_config_present: false`). A bare
+`builder.compile()` counts as resolved-and-empty; a chained
+`StateGraph(...).compile()`, a `compile(**cfg)`, and a graph whose compiled result is
+passed to another builder's `add_node` (a subgraph) are all treated as *unobserved*
+and stay silent.
+
+**Why it is flaggable:** a checkpointer is what persists graph state between steps.
+Without one the run lives only in process memory: a crash, restart or deploy
+discards completed steps and tool results, a retry re-executes side-effecting nodes
+from the start, and `interrupt()` / `interrupt_before` cannot resume because there
+is no saved state to resume from — so a graph that appears to have a human-approval
+gate cannot actually pause for one.
+
+**Real-world consequence:** a graph that sends an email in node 3 crashes in node 5;
+the supervisor restarts the worker and the run replays from node 1, sending the
+email twice. Or an `interrupt()` approval gate raises at runtime because the graph
+was compiled without a checkpointer, and the team "fixes" it by deleting the gate.
+
+**Why severity is medium and not high:** the failure needs a crash, restart or
+interrupt to bite, and many short-lived graphs legitimately never need to resume.
+It is a durability and approval-gate prerequisite rather than a direct exposure.
+**Fix type — code:** the checkpointer is passed in the `.compile(...)` call.
+
+**Confidence 0.6:** the gap covers (a) a subgraph compiled in another file, which
+inherits its parent's checkpointer and is intentionally compiled bare; (b) a
+Platform deployment whose `langgraph.json` lives outside the scanned tree;
+(c) a checkpointer attached by a wrapper that returns the compiled graph. The
+`agent_kwargs_observed` and `langgraph.json` clauses exist precisely to cut the two
+largest false-positive classes: unresolved call sites and Platform repos.
+
 ---
 
 ## What this policy does not cover
@@ -117,6 +158,12 @@ as hosted edges but not yet a dedicated agent rule), v1 `create_agent` middlewar
 quality, and whether a code-execution tool is *actually* sandboxed out of band. The
 iteration rules check `AgentExecutor` only — `create_react_agent` / `create_agent`
 enforce their own recursion limit differently and are out of scope here.
+- For LC-114: a graph whose `compile(...)` is chained onto the constructor, built
+  with `**` unpacking, or compiled in a different file than its builder is never
+  linked to its kwargs, so the rule stays silent rather than guess. A subgraph
+  compiled in another file than the parent that mounts it cannot be recognised as a
+  subgraph and may be flagged. A `checkpointer=` pointing at a throwaway
+  `MemorySaver()` in production satisfies the rule without giving real durability.
 
 ---
 
