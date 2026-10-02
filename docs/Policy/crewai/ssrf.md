@@ -8,17 +8,22 @@ rules:
     confidence: 0.8
     scope: tool
     fix_type: code
-references: [LLM06]
+  - id: CREW-015
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+references: [LLM06, LLM02, LLM01]
 ---
 
 # Policy Rationale: CrewAI SSRF Safety
 
 **Policy ID:** `crewai_ssrf`  
 **File:** `crewai/ssrf.yaml`  
-**Rules:** CREW-005  
-**Severities:** high  
-**Fix types:** code  
-**References:** LLM06 (Excessive Agency)
+**Rules:** CREW-005, CREW-015  
+**Severities:** high, medium  
+**Fix types:** code, code  
+**References:** LLM06 (Excessive Agency), LLM02, LLM01
 
 ---
 
@@ -83,6 +88,40 @@ predicate flags a non-literal URL, so it over-fires when the dynamic part is
 already validated against an allow-list inside the body (the rule cannot see the
 guard), and it under-fires when the URL is assembled in a helper in another
 module.
+
+### CREW-015 — CrewAI tool fetches an allow-listed host without pinning https:// (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a Python tool whose body checks the destination host against a named allow-list (the same `has_body_text` credit that silences CREW-005) and makes a recognized HTTP call (`requests`/`httpx`/`urllib`/aliased clients) with a dynamic URL that neither starts with a literal `https://` prefix nor is guarded by a scheme check (`.scheme ==`/`!=`/`in`/`not in`, `startswith("https://")`). Backed by `has_unpinned_scheme_url_call`, which treats an f-string, `+` concatenation, `%`-format, or `.format()` call whose leftmost literal starts with `https://` as pinned.
+
+**Why it is flaggable:** the allow-list (CREW-005's credit) constrains *where* the request goes, not *how*. An `http://` URL for an allowed
+host passes the host check, so request headers (API keys, bearer tokens) and bodies travel in cleartext, and a network-path attacker can read
+them or rewrite the response. The response re-enters the model's context as trusted tool output, which makes tampering a prompt-injection channel.
+A redirect from the allowed host to `http://` has the same effect.
+
+**Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
+and integrity loss of the content the model reasons over.
+
+**Why medium / 0.6:** medium rather than CREW-005's high because the host is already bounded, so the residual risk needs a network-path attacker
+rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
+another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+
+**Staging:** the rule requires the allow-list credit to be present, so CREW-005 and CREW-015 never fire on the same tool: SSRF first, then HTTPS once a host
+allow-list exists.
+
+**What this does not cover:** a fully literal `http://` URL (not dynamic, so outside the SSRF family); scheme validation in another function
+or file; HTTPS downgrade via a redirect chain the rule cannot trace; and HSTS or transport policy configured outside the tool body.
+
+**Safe-code recommendation:**
+
+```python
+ALLOWED_HOSTS = {"api.example.com"}
+
+def fetch(path: str) -> str:
+    url = f"https://api.example.com/{quote(path)}"   # scheme is a literal
+    if urlparse(url).hostname not in ALLOWED_HOSTS:
+        raise ValueError("host not allowed")
+    return requests.get(url, timeout=10, allow_redirects=False).text
+```
 
 ---
 

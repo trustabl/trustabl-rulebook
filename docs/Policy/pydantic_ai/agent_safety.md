@@ -170,7 +170,9 @@ channel to attacker URLs. For `WebSearchTool`, the model-chosen query is itself 
 exfiltration channel, and the returned results are attacker-reachable text that
 re-enters the context as a second-order prompt-injection channel. Pydantic AI's
 built-in fetchers have needed SSRF hardening (CVE-2026-46678, CVE-2026-25580), so
-enabling one without egress controls reintroduces that exposure.
+enabling one without egress controls reintroduces that exposure. The fix text also notes that
+`WebFetchTool(allowed_domains=...)` narrows destinations on Anthropic only (Google ignores it), so it is
+not a substitute for process-level egress controls.
 
 **Real-world consequence:** an agent with `WebFetchTool` is injected to fetch
 `http://169.254.169.254/latest/meta-data/iam/security-credentials/`, and the
