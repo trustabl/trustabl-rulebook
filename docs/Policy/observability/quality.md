@@ -97,7 +97,13 @@ to spans the agent already emits. They read a separate set of typed records,
 `OtelLabelsSignal`, produced by the scanner's `DiscoverOtelLabels` pass, with
 a `Kind` of `import`, `run_start`, `tool_span`, `run_end` or `attr_literal` (a
 `trustabl.*` label key written to a span by hand), plus the recon fact
-`RepoProfile.OtelLabelsDeclaredIn`. These records are kept out of the
+`RepoProfile.OtelLabelsDeclaredIn`. OBS-009, OBS-010, OBS-011 and OBS-012 cover a
+further layer: whether the labels that are written are right. They read the same
+records, with one more kind, `run_construct` (a `Run(...)` / `new Run(...)`
+resolved through the file's own import), and per-call facts on them: `ModuleScope` and `RunIDConst`
+on a `Run`; `FailureSafe`, `HookUnknown`, `AttemptConst` and `SideEffect` on a
+tool span; `ErrorPath` and `ExitReason` on a run end. Every signal also carries
+`TestOrigin`, and test-file signals never decide these four rules. These records are kept out of the
 `ObservabilitySignal` set on purpose: `agent-reliability-otel-labels` never creates a span, so
 counting it as observability would let the library satisfy its own prerequisite.
 
@@ -606,7 +612,7 @@ OBS-009..012 apply once those three pass: they check that the labels written are
 ### OBS-009 — One agent-reliability-otel-labels Run is shared by every agent run (Severity: medium, Confidence: 0.6, Fix type: code)
 
 **What we detect:**  
-A `Run` of `agent-reliability-otel-labels`, resolved through the file's own import, built once rather than per run: at module scope, in a class body, or as a Python default argument (evaluated once at definition time). A `Run` given a string-literal run id counts too. A Python construct under `if __name__ == "__main__":` is a one-run script and is exempt. Gated on tracing being initialized and a run being started. Test files never count.
+A `Run` of `agent-reliability-otel-labels`, resolved through the file's own import, built once rather than per run: at module scope, in a class body, or as a Python default argument (evaluated once at definition time). A `Run` given a string-literal run id counts too. A Python construct under `if __name__ == "__main__":` is a one-run script and is exempt from the module-scope trigger only; a literal run id there still fires. Gated on tracing being initialized and the library being initialized (a run started). Test files never count.
 
 **Why it is flaggable:**  
 `Run` holds the run id and the step counter. Built once, it hands every run the same `trustabl.run_id` and one interleaved step sequence. The library cannot detect this; it labels whatever `Run` it is given.
@@ -628,7 +634,7 @@ A module-scope `Run` in a TypeScript single-run script has no `__main__` equival
 ### OBS-010 — Tool spans are labelled only when the tool succeeds (Severity: low, Confidence: 0.55, Fix type: code)
 
 **What we detect:**  
-`mark_tool_span` / `markToolSpan` calls exist, and none sits in a `finally`, `except` or `catch` block, a named error callback (`on_tool_error`, `on_chain_error`, `handleToolError`), or a function passed to `.finally(` / `.catch(`. Calls inside an OpenAI Agents `RunHooks` / `AgentHooks` `on_tool_end` method are left out, because whether that hook runs after a tool raises is unverified. One failure-safe call credits the repo.
+`mark_tool_span` / `markToolSpan` calls exist, and none sits in a `finally`, `except` or `catch` block, a named error callback (`on_tool_error`, `on_chain_error`, `handleToolError`), or a function passed to `.finally(` / `.catch(`. Calls inside an OpenAI Agents `RunHooks` / `AgentHooks` `on_tool_end` method are left out, because whether that hook runs after a tool raises is unverified. One failure-safe call credits the repo. Gated on tracing being initialized and the labels being implemented (OBS-006..008 pass). Test files never count.
 
 **Why it is flaggable:**  
 A label written after the tool returns is skipped when the tool raises, so failed calls carry no fingerprint or attempt count.
@@ -650,13 +656,13 @@ Frameworks that label from a hook the scanner does not recognise may be failure-
 ### OBS-011 — The tool-call attempt count is a constant (Severity: low, Confidence: 0.7, Fix type: code)
 
 **What we detect:**  
-Every `mark_tool_span` / `markToolSpan` call passes `attempt` as an integer literal. One counted attempt credits the repo. Python's `attempt` is a required keyword argument, so a positional value cannot hide it; TypeScript's shorthand `{ attempt }` is a variable.
+Every `mark_tool_span` / `markToolSpan` call passes `attempt` as an integer literal. One counted attempt credits the repo. Python's `attempt` is a required keyword argument, so a positional value cannot hide it; TypeScript's shorthand `{ attempt }` is a variable. Gated on tracing being initialized and the labels being implemented (OBS-006..008 pass). Test files never count.
 
 **Why it is flaggable:**  
 `trustabl.tool.attempt` exists to show retries. A constant reports every call as a first attempt.
 
 **Real-world consequence:**  
-An agent that calls the same tool with the same arguments over and over looks like a series of fresh calls, so the retry pattern the label exists to show is hidden.
+An agent that calls the same tool with the same arguments over and over looks like a series of fresh calls, so the explicit retry count the label exists to show is lost, and repetition is visible only by comparing input fingerprints by hand.
 
 **Why severity is low:**  
 The other labels, including the input fingerprint, still show repetition; only the explicit retry count is lost.
@@ -672,7 +678,7 @@ A literal is unambiguous. A single-call tool that never retries is a theoretical
 ### OBS-012 — The run's end is recorded only when the run succeeds (Severity: low, Confidence: 0.55, Fix type: code)
 
 **What we detect:**  
-Run-end calls exist and none can record a failure. A call credits the repo when it sits in an `except` / `catch` block, a named error callback or a `.catch(` handler, passes the literal `"error"`, or passes a variable reason. A fixed reason in `finally` does not credit it, because it records failed runs as finished.
+Run-end calls exist and none can record a failure. A call credits the repo when it sits in an `except` / `catch` block, a named error callback or a `.catch(` handler, passes the literal `"error"`, or passes a variable reason. A fixed reason in `finally` does not credit it, because it records failed runs as finished. Gated on tracing being initialized and the labels being implemented (OBS-006..008 pass). Test files never count.
 
 **Why it is flaggable:**  
 The exit reason separates failed runs from completed ones. Written only on success, it is either missing or wrong exactly when it matters.
@@ -704,7 +710,7 @@ A reason computed elsewhere and passed as a variable is credited even if it neve
   that is down, misconfigured, or dropping data satisfies every rule here. These
   are static checks on wiring, not liveness checks.
 - **Sampling.** A correctly initialized provider with a 0% sampler produces no
-  usable traces and passes all three rules.
+  usable traces and passes every rule here (OBS-006..008 included).
 - **Span quality.** Nothing here checks whether spans follow the OTel GenAI
   semantic conventions, carry token/cost attributes, or record errors with a
   status — the last of which is deliberately deferred to the runtime phase,
