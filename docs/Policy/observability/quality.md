@@ -23,6 +23,21 @@ rules:
     confidence: 0.65
     scope: repo
     fix_type: code
+  - id: OBS-006
+    severity: low
+    confidence: 0.7
+    scope: repo
+    fix_type: code
+  - id: OBS-007
+    severity: medium
+    confidence: 0.65
+    scope: repo
+    fix_type: code
+  - id: OBS-008
+    severity: medium
+    confidence: 0.6
+    scope: repo
+    fix_type: code
 references: [LLM02, LLM10]
 ---
 
@@ -30,9 +45,9 @@ references: [LLM02, LLM10]
 
 **Policy ID:** `observability_quality`  
 **File:** `observability/quality.yaml`  
-**Rules:** OBS-001, OBS-002, OBS-003, OBS-005  
-**Severities:** medium, low, medium, medium  
-**Fix types:** code, config, config, code  
+**Rules:** OBS-001, OBS-002, OBS-003, OBS-005, OBS-006, OBS-007, OBS-008  
+**Severities:** medium, low, medium, medium, low, medium, medium  
+**Fix types:** code, config, config, code, code, code, code  
 **References:** LLM02 (Sensitive Information Disclosure), LLM10 (Unbounded Consumption)
 
 ---
@@ -53,6 +68,17 @@ per-agent opt-in such as Pydantic AI's `instrument=`). OBS-001 fires when
 signals exist but none is `init` or `instrument_kwarg`; OBS-002 when exporters
 exist and every one has sink `console`; OBS-003 when any `content_capture`
 signal is present.
+
+OBS-006, OBS-007 and OBS-008 cover a different layer: tracing that works, but
+whose spans say too little to diagnose an agent. They check for `agent-reliability-otel-labels`,
+the library that adds process-metadata labels (run identity, step order,
+argument and result fingerprints, attempt count, side-effect class, exit reason)
+to spans the agent already emits. They read a separate set of typed records,
+`OtelLabelsSignal`, produced by the scanner's `DiscoverOtelLabels` pass, with
+a `Kind` of `import`, `run_start`, `tool_span` or `run_end`, plus the recon fact
+`RepoProfile.OtelLabelsDeclaredIn`. These records are kept out of the
+`ObservabilitySignal` set on purpose: `agent-reliability-otel-labels` never creates a span, so
+counting it as observability would let the library satisfy its own prerequisite.
 
 ---
 
@@ -339,6 +365,208 @@ The nine absence rules carry `repo_observability_declared: false` for exactly
 this reason: without it, a declared-but-unwired repo would draw the `low`
 "wires no observability" finding, which understates it.
 
+---
+
+### OBS-006 — Instrumented agent does not label its spans with agent-reliability-otel-labels (Severity: low, Confidence: 0.7, Fix type: code)
+
+**What we detect:**  
+Instrumentation is switched on (`repo_observability_initialized: true` — an init
+call or a per-agent instrument kwarg) and `agent-reliability-otel-labels` is absent
+(`repo_otel_labels_installed: false`). "Absent" means both halves are missing:
+no root manifest declares it (`agent-reliability-otel-labels` or `agent_reliability_otel_labels` in
+`pyproject.toml`, `requirements.txt`, `Pipfile` or `poetry.lock`;
+`@trustabl/agent-reliability-otel-labels` in `package.json`), and no parsed Python or
+TypeScript/JavaScript file imports `agent_reliability_otel_labels` or `@trustabl/agent-reliability-otel-labels`. Either
+half alone silences the rule.
+
+**Why it is flaggable:**  
+A span produced by an agent framework's instrumentation records that a tool ran,
+when, and for how long. It does not record whether this call had the same
+arguments as an earlier one, whether it was a retry, whether it changed outside
+state, or how the run ended. Those are the facts that separate a healthy run
+from a looping, retrying or truncated one, and none of them can be recovered
+from the span afterwards: argument text is usually not captured (and should not
+be — see OBS-003), so two calls cannot be compared, and a framework does not
+report that it stopped at a step cap as distinct from finishing. The gap is in
+what the spans carry, not in whether they are exported.
+
+**Real-world consequence:**  
+- An agent calls the same search tool with the same arguments twelve times
+  before giving up. Each span is a short, successful tool call. The trace looks
+  busy, not broken, and the loop is found only when someone reads the spans in
+  order by hand.
+- A run stops at its step limit on every invocation and returns whatever it had.
+  From the outside the run completed without error, so the truncation is
+  invisible in dashboards and surfaces as a quality complaint.
+- A tool that sends a payment is retried after a timeout. Without an attempt
+  count and a side-effect class on the span, the trace cannot show that an
+  irreversible call ran twice.
+
+**Why severity is low and not medium:**  
+Nothing is misrepresented. The repo has working tracing and makes no claim to
+have process labels, which is the same position as a repo with no tracing at
+all, and the nine per-SDK absence rules sit at `low` for that reason. This rule
+also recommends a specific library, published by the authors of the scanner, as
+the remedy. That is a recommendation about depth of diagnosis, not a defect in
+the agent, and it should not outrank findings that are. The same labels can be
+written by hand; the rule names the library because it is the implementation
+the scanner can recognize.
+
+**Fix type — code:**  
+Installing the package changes nothing on its own. The remedy is the labelling
+code: a `Run` per agent run, `mark_start` on the root span, `mark_tool_span` on
+each tool span and `mark_run_end` before the root span closes.
+
+**Confidence 0.7:**  
+The 0.3 gap:
+- **Instrumentation that does not emit OpenTelemetry spans.** The gate is "any
+  instrumentation is initialized", across every vendor the observability pass
+  knows. `agent-reliability-otel-labels` labels OpenTelemetry spans. A repo whose only tracing
+  is a vendor's own non-OpenTelemetry client, or a LangChain `callbacks=` list
+  holding an arbitrary handler, will fire although the library has no span to
+  label there. This is the largest false-positive source.
+- **The Go binding.** Only Python and TypeScript/JavaScript are inspected, and
+  `go.mod` is not read. A mixed repo that labels its spans in a Go service and
+  initializes tracing in a Python one will fire.
+- **Nested manifests.** Recon reads root manifests only. A monorepo that
+  declares the library in `services/agent/pyproject.toml` is credited only
+  through its import, so a package that is declared there and not yet imported
+  draws this rule instead of OBS-007.
+- **Hand-written labels.** A repo that sets the `trustabl.*` attribute keys
+  directly with `span.set_attribute` has the labels and will still fire.
+
+---
+
+### OBS-007 — agent-reliability-otel-labels is installed but no run is ever started (Severity: medium, Confidence: 0.65, Fix type: code)
+
+**What we detect:**  
+Instrumentation is switched on (`repo_observability_initialized: true`),
+`agent-reliability-otel-labels` is present (`repo_otel_labels_installed: true`), and no run is
+started (`repo_otel_labels_initialized: false`). A run is started by a call to
+`mark_start` on a `Run` — `<run>.mark_start(...)` in Python,
+`<run>.markStart(...)` in TypeScript/JavaScript. The call must have a receiver:
+a bare `mark_start(...)` is some other function. Constructing a `Run` does not
+count, and neither do `mark_tool_span` or `mark_run_end` calls on their own.
+
+**Why it is flaggable:**  
+`mark_start` is the call that writes `trustabl.run_id` on the root span. Every
+other label is interpreted relative to a run: step order is an order within a
+run, an attempt count is a count within a run, and a repeated fingerprint means
+a loop only when both calls belong to the same run. With no run identity on the
+root span, tool-span labels cannot be grouped and the labels that were written
+cannot be read as intended. The library is present and partly used, and the one
+call that makes the rest meaningful is missing.
+
+**Real-world consequence:**  
+- A team adds the dependency and the imports during a tracing rollout and never
+  reaches the root-span wiring. The package ships in the image and the SBOM, and
+  no trace carries a run id.
+- Tool spans are labelled with fingerprints and attempt counts inside a tool
+  wrapper, but the agent entrypoint never calls `mark_start`. A query for
+  repeated fingerprints returns matches across unrelated runs, and what looks
+  like a loop is two users asking the same question.
+
+**Why severity is medium and not low:**  
+The reasoning is OBS-005's: a repo that has not adopted the library has made a
+visible choice and draws OBS-006 at `low`; a repo that ships it has made the
+opposite choice on paper and not carried it out. The manifest and the imports
+assert a capability that an exported trace does not have. It is not high because
+the agent's behavior and data handling are unchanged; only the ability to
+diagnose it is.
+
+**Fix type — code:**  
+One `Run` per agent run, constructed inside the function that runs the agent,
+and `run.mark_start(root)` on the root span as soon as it is open.
+
+**Confidence 0.65:**  
+The 0.35 gap:
+- **A run started through a wrapper.** A project helper that receives the `Run`
+  and calls `mark_start` is seen. One that hides the call behind `getattr`, or
+  imports it under an alias the call-name match does not follow, is not.
+- **Lock-file-only declarations.** `poetry.lock` counts as installed here,
+  unlike OBS-005, because nothing depends on `agent-reliability-otel-labels` transitively. A
+  lock file left over after the dependency was removed from `pyproject.toml`
+  will fire.
+- **A run started in Go.** As in OBS-006, a Go service that calls
+  `run.MarkStart` is not inspected.
+- **Repo-wide name matching.** Once any file imports the library, a
+  `.mark_start(` call on an unrelated object anywhere in the repo is credited as
+  a run start. That is a false negative, accepted so that a `Run` built in one
+  module and started in another is recognized.
+
+---
+
+### OBS-008 — An agent-reliability-otel-labels run is started but its spans are never labelled (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:**  
+Instrumentation is switched on (`repo_observability_initialized: true`), a run
+is started (`repo_otel_labels_initialized: true`), and the labels are not
+written (`repo_otel_labels_implemented: false`). "Written" requires a
+`mark_run_end` / `markRunEnd` call, and, when the repo ships at least one tool
+the model calls, a `mark_tool_span` / `markToolSpan` call as well. The tool
+obligation is read from the typed inventory: a tool counts when its kind is one
+an agent framework emits a tool-execution span for. A bare shell-invoking
+function and a LangGraph node do not count, and a repo with no such tool needs
+only the run end.
+
+**Why it is flaggable:**  
+A started run with no labels is a root span carrying a run id and nothing else.
+The run id groups spans; it answers none of the questions the library exists to
+answer. Without `mark_tool_span` there are no input or output fingerprints, no
+attempt count, no side-effect class and no step index. Without `mark_run_end`
+there is no exit reason, so a run stopped by its step cap or by a policy reads
+the same as one that returned a final answer.
+
+**Real-world consequence:**  
+- The root-span wiring lands in one change and the per-tool labelling is left
+  for a follow-up that does not happen. Dashboards show run ids on every trace,
+  which reads as done.
+- A new tool is added to an agent whose other tools are labelled through a
+  shared wrapper the new tool does not use. This rule does not catch that case
+  (see the gap below), but it is the same failure at smaller scale.
+- `mark_run_end` is omitted, and a weekly review of "runs that ended in
+  `max_steps`" returns nothing because no run records an exit reason at all.
+
+**Why severity is medium and not low:**  
+The same argument as OBS-007, one rung further along: the repo asserts more
+(dependency, imports, a started run) and delivers less than it appears to. It is
+not high for the same reason as the other rungs.
+
+**Fix type — code:**  
+`mark_tool_span` on each tool's span, inside a `finally` block so that a failing
+call is still labelled, and `mark_run_end` before the root span ends, with
+`error` on the exception path.
+
+**Confidence 0.6 — the lowest of the three:**  
+The rule proves that calls exist, which is weaker evidence in both directions.
+The 0.4 gap:
+- **Partial labelling passes.** One `mark_tool_span` call anywhere satisfies the
+  tool obligation for a repo with twenty tools. The rule is a repo-level floor,
+  not a per-tool check, because labelling in a shared wrapper or hook is a
+  legitimate pattern the scanner cannot tie back to individual tools.
+- **Tools the agent does not use.** The obligation is triggered by any
+  discovered tool in the repo. A repo whose instrumented agent is tool-less but
+  which also contains an unrelated MCP server will fire for the missing
+  `mark_tool_span`.
+- **Externally defined tools.** An agent whose tools all come from a remote MCP
+  server or a hosted tool has no discovered tool definition, so the rule accepts
+  the run end alone although tool spans exist at run time.
+- **Run end on one path only.** A `mark_run_end` call that is reached only on
+  success satisfies the rule and leaves failed runs without an exit reason.
+
+**Relationship between the three agent-reliability-otel-labels rules:**  
+All three are gated on `repo_observability_initialized: true`, because the
+library only labels spans that already exist; a repo with no tracing draws its
+SDK's absence rule instead and none of these. Within that gate the states are
+mutually exclusive, and at most one rule fires:
+
+| Repo state | Rule | Severity |
+|---|---|---|
+| Not declared, not imported | OBS-006 | low |
+| Declared or imported, no `mark_start` | OBS-007 | medium |
+| `mark_start` present, labels missing | OBS-008 | medium |
+| `mark_start`, `mark_run_end` and (if tools exist) `mark_tool_span` | none | — |
+
 ## What this policy does not cover
 
 - **Initialization outside the parsed languages.** Phase 1 parses Python and
@@ -364,6 +592,17 @@ this reason: without it, a declared-but-unwired repo would draw the `low`
 - **Redaction that is present.** A span processor that strips message bodies
   before export does not silence OBS-003; the finding is then accurate about the
   switch but overstated about the exposure.
+- **Whether agent-reliability-otel-labels labels land.** Every label call is a silent no-op when
+  there is no current span inside the tool, for example because no context
+  manager is registered. A repo in that state passes OBS-006, OBS-007 and
+  OBS-008 and writes no label. Only exporting one run and looking for
+  `trustabl.tool.input_fp` on a tool span shows it.
+- **Whether agent-reliability-otel-labels is used correctly.** A `Run` shared between runs, a
+  constant `attempt`, labelling outside a `finally` block, a `side_effect` value
+  that contradicts what the tool does, and a missing `mark_handoff` on a
+  delegated agent all pass. These are deferred static checks.
+- **Label values.** Whether `write` should have been `irreversible`, or `error`
+  should have been `max_steps`, is not something a static check can decide.
 
 ---
 
