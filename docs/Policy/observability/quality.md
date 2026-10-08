@@ -38,6 +38,26 @@ rules:
     confidence: 0.6
     scope: repo
     fix_type: code
+  - id: OBS-009
+    severity: medium
+    confidence: 0.6
+    scope: repo
+    fix_type: code
+  - id: OBS-010
+    severity: low
+    confidence: 0.55
+    scope: repo
+    fix_type: code
+  - id: OBS-011
+    severity: low
+    confidence: 0.7
+    scope: repo
+    fix_type: code
+  - id: OBS-012
+    severity: low
+    confidence: 0.55
+    scope: repo
+    fix_type: code
 references: [LLM02, LLM10]
 ---
 
@@ -45,9 +65,9 @@ references: [LLM02, LLM10]
 
 **Policy ID:** `observability_quality`  
 **File:** `observability/quality.yaml`  
-**Rules:** OBS-001, OBS-002, OBS-003, OBS-005, OBS-006, OBS-007, OBS-008  
-**Severities:** medium, low, medium, medium, low, medium, medium  
-**Fix types:** code, config, config, code, code, code, code  
+**Rules:** OBS-001, OBS-002, OBS-003, OBS-005, OBS-006, OBS-007, OBS-008, OBS-009, OBS-010, OBS-011, OBS-012  
+**Severities:** medium, low, medium, medium, low, medium, medium, medium, low, low, low  
+**Fix types:** code, config, config, code, code, code, code, code, code, code, code  
 **References:** LLM02 (Sensitive Information Disclosure), LLM10 (Unbounded Consumption)
 
 ---
@@ -579,6 +599,96 @@ mutually exclusive, and at most one rule fires:
 | `mark_start` present, labels missing | OBS-008 | medium |
 | `mark_start`, `mark_run_end` and (if tools exist) `mark_tool_span` | none | — |
 
+OBS-009..012 apply once those three pass: they check that the labels written are right, not only present.
+
+---
+
+### OBS-009 — One agent-reliability-otel-labels Run is shared by every agent run (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:**  
+A `Run` of `agent-reliability-otel-labels`, resolved through the file's own import, built once rather than per run: at module scope, in a class body, or as a Python default argument (evaluated once at definition time). A `Run` given a string-literal run id counts too. A Python construct under `if __name__ == "__main__":` is a one-run script and is exempt. Gated on tracing being initialized and a run being started. Test files never count.
+
+**Why it is flaggable:**  
+`Run` holds the run id and the step counter. Built once, it hands every run the same `trustabl.run_id` and one interleaved step sequence. The library cannot detect this; it labels whatever `Run` it is given.
+
+**Real-world consequence:**  
+Two users' requests become one run in the trace. Two identical questions from different users read as a loop, and step order is the order requests arrived, not the order anything happened in a run. Runtime checks that group tool calls by run id reach wrong conclusions with no sign that the labels are wrong.
+
+**Why severity is medium and not low:**  
+The labels are not missing, they are wrong. A missing label leaves a known gap; a wrong one produces confident false conclusions downstream.
+
+**Fix type — code:**  
+Create the `Run` inside the function that handles one run and pass it down.
+
+**Confidence 0.6:**  
+A module-scope `Run` in a TypeScript single-run script has no `__main__` equivalent and is flagged (spec O4). `self.run = Run()` in a long-lived object's `__init__` is shared but not detected.
+
+---
+
+### OBS-010 — Tool spans are labelled only when the tool succeeds (Severity: low, Confidence: 0.55, Fix type: code)
+
+**What we detect:**  
+`mark_tool_span` / `markToolSpan` calls exist, and none sits in a `finally`, `except` or `catch` block, a named error callback (`on_tool_error`, `on_chain_error`, `handleToolError`), or a function passed to `.finally(` / `.catch(`. Calls inside an OpenAI Agents `RunHooks` / `AgentHooks` `on_tool_end` method are left out, because whether that hook runs after a tool raises is unverified. One failure-safe call credits the repo.
+
+**Why it is flaggable:**  
+A label written after the tool returns is skipped when the tool raises, so failed calls carry no fingerprint or attempt count.
+
+**Real-world consequence:**  
+Retry storms consist of failed calls. With those unlabelled, ten failed retries leave one labelled span and the repetition is invisible.
+
+**Why severity is low:**  
+Successful calls are still labelled correctly; the gap is limited to failures.
+
+**Fix type — code:**  
+Call the tool in `try` and label in `finally`, with `result = None` set first.
+
+**Confidence 0.55:**  
+Frameworks that label from a hook the scanner does not recognise may be failure-safe and still flagged. Partial misuse, where one call is safe and others are not, is accepted as a miss.
+
+---
+
+### OBS-011 — The tool-call attempt count is a constant (Severity: low, Confidence: 0.7, Fix type: code)
+
+**What we detect:**  
+Every `mark_tool_span` / `markToolSpan` call passes `attempt` as an integer literal. One counted attempt credits the repo. Python's `attempt` is a required keyword argument, so a positional value cannot hide it; TypeScript's shorthand `{ attempt }` is a variable.
+
+**Why it is flaggable:**  
+`trustabl.tool.attempt` exists to show retries. A constant reports every call as a first attempt.
+
+**Real-world consequence:**  
+An agent that calls the same tool with the same arguments over and over looks like a series of fresh calls, so the retry pattern the label exists to show is hidden.
+
+**Why severity is low:**  
+The other labels, including the input fingerprint, still show repetition; only the explicit retry count is lost.
+
+**Fix type — code:**  
+Keep a per-run count keyed by `canonical_fp(args)` and pass it.
+
+**Confidence 0.7:**  
+A literal is unambiguous. A single-call tool that never retries is a theoretical false positive.
+
+---
+
+### OBS-012 — The run's end is recorded only when the run succeeds (Severity: low, Confidence: 0.55, Fix type: code)
+
+**What we detect:**  
+Run-end calls exist and none can record a failure. A call credits the repo when it sits in an `except` / `catch` block, a named error callback or a `.catch(` handler, passes the literal `"error"`, or passes a variable reason. A fixed reason in `finally` does not credit it, because it records failed runs as finished.
+
+**Why it is flaggable:**  
+The exit reason separates failed runs from completed ones. Written only on success, it is either missing or wrong exactly when it matters.
+
+**Real-world consequence:**  
+Every run looks like it finished; failure rates read as zero.
+
+**Why severity is low:**  
+Successful runs are labelled correctly and the failure itself is still visible in span status.
+
+**Fix type — code:**  
+Record `"final_answer"` at the end of `try` and `"error"` in `except`, re-raising after.
+
+**Confidence 0.55:**  
+A reason computed elsewhere and passed as a variable is credited even if it never carries `"error"`; error handling spread over several functions is not followed.
+
 ## What this policy does not cover
 
 - **Initialization outside the parsed languages.** Phase 1 parses Python and
@@ -609,10 +719,17 @@ mutually exclusive, and at most one rule fires:
   manager is registered. A repo in that state passes OBS-006, OBS-007 and
   OBS-008 and writes no label. Only exporting one run and looking for
   `trustabl.tool.input_fp` on a tool span shows it.
-- **Whether agent-reliability-otel-labels is used correctly.** A `Run` shared between runs, a
-  constant `attempt`, labelling outside a `finally` block, a `side_effect` value
-  that contradicts what the tool does, and a missing `mark_handoff` on a
-  delegated agent all pass. These are deferred static checks.
+- **Whether agent-reliability-otel-labels is used correctly, beyond OBS-009..012.**
+  OBS-009..012 check a shared `Run`, tool spans labelled only on success, a
+  constant `attempt` and a run end recorded only on success. Still out of
+  reach: the handoff label (`mark_handoff` on a delegated agent), deferred until
+  a per-framework recipe shows how to reach the delegated agent's span; the
+  correctness of `side_effect` (whether the value contradicts what the tool
+  does), planned for a later batch; and the Go binding, which is not inspected.
+- **Partial misuse.** One correct call credits the repo, so a repo with one
+  failure-safe `mark_tool_span` among several unsafe ones passes OBS-010.
+- **A `Run` held in a long-lived object.** `self.run = Run()` in an `__init__`
+  is shared between runs but is not detected by OBS-009.
 - **Label values.** Whether `write` should have been `irreversible`, or `error`
   should have been `max_steps`, is not something a static check can decide.
 
