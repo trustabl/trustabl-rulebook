@@ -58,17 +58,22 @@ rules:
     confidence: 0.75
     scope: agent
     fix_type: config
-references: [LLM01, LLM03, LLM06]
+  - id: ADK-113
+    severity: low
+    confidence: 0.5
+    scope: agent
+    fix_type: code
+references: [LLM01, LLM03, LLM06, LLM10]
 ---
 
 # Policy Rationale: ADK Agent Safety
 
 **Policy ID:** `google_adk_agent_safety`  
 **File:** `google_adk/agent_safety.yaml`  
-**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-109, ADK-110, ADK-111  
-**Severities:** medium, high, high, medium, high, high, high, medium, medium, medium, high  
-**Fix types:** config, config, config, config, config, config, config, config, config, config, config  
-**References:** LLM01, LLM03, LLM06
+**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-109, ADK-110, ADK-111, ADK-113  
+**Severities:** medium, high, high, medium, high, high, high, medium, medium, medium, high, low  
+**Fix types:** config, config, config, config, config, config, config, config, config, config, config, code  
+**References:** LLM01, LLM03, LLM06, LLM10
 
 ---
 
@@ -306,6 +311,52 @@ for an unfiltered sibling on the same agent.
 
 ---
 
+### ADK-113 — Runner run call has no wall-clock timeout (Severity: low, Confidence: 0.5, Fix type: code)
+
+**What we detect:** an ADK agent (any of the five `adk_*` agent kinds) that a
+same-file `Runner.run` / `Runner.run_async` call executes, where NONE of those
+run calls sits structurally inside an `asyncio.wait_for(...)` argument or the
+body of an `asyncio.timeout` / `anyio.move_on_after` / `anyio.fail_after` `with`
+block, and none passes a non-`None` `abort_signal=` (predicate
+`agent_run_call_wall_clock_timeout_missing`). The agent is two hops from the
+call: discovery binds `runner = Runner(agent=a, ...)` /
+`InMemoryRunner(a)` to the agent identifier, then correlates
+`runner.run_async(...)` to it by same-file `VarName`. `run_live` is not a run
+call here, and a runner built from `app=App(...)` never resolves, so neither
+fires.
+
+**Why it is flaggable:** `RunConfig.max_llm_calls` bounds how many model calls a
+run makes, not how long one may block. A stalled provider connection or a slow
+tool call keeps the `run_async` generator waiting with no deadline, and ADK
+exposes no run-level time limit of its own — the only bounds are the caller's:
+an enclosing asyncio/anyio timeout or the caller-set `abort_signal` event the
+signature accepts. The check is structural (an ancestor walk that stops at the
+function boundary), so an unrelated timeout elsewhere in the file earns no credit.
+
+**Real-world consequence:** one hung request pins the session, the worker, and
+every tool credential the agent was granted until the process is killed; behind
+an HTTP handler this accumulates stuck requests, and a looping agent that stays
+under the call cap can still run for hours.
+
+**Why low and not medium:** the failure is an availability and cost amplifier,
+not a confidentiality or integrity break, and a deployment-level timeout (the
+server's request deadline, a job runner's kill) often exists outside the code
+this rule can see.
+
+**Fix type — code:** wrap the call (`async with asyncio.timeout(...)` around
+`async for event in runner.run_async(...)`), or pass an `abort_signal` a timer
+sets — a change at the call site, not agent configuration.
+
+**Confidence 0.5:** false positives are common by design — a timeout applied by
+the *caller* of the function that contains the run call, a gateway or worker
+deadline, or a framework (FastAPI middleware, Cloud Run request timeout) is
+invisible here. The synchronous `Runner.run` cannot be wrapped in an asyncio
+timeout at all, so it always fires. False negatives: a runner constructed in
+another module, passed as a parameter, or built from `app=` never resolves to an
+agent, and an `abort_signal` that nothing ever sets satisfies the check.
+
+---
+
 ## What this policy does not cover
 
 - The *quality* of a callback that is present — a `before_tool_callback` that always
@@ -324,6 +375,9 @@ for an unfiltered sibling on the same agent.
   allow-list naming every server tool, or a `ToolPredicate` that always returns
   `True` satisfies ADK-111 while narrowing nothing; and even a tight filter
   constrains *names* only — the server still controls what the allowed names do.
+- Time bounds applied outside the run call's own function (ADK-113): a timeout
+  around the caller, a server request deadline, or a worker kill timer. An
+  `abort_signal` that is passed but never set also satisfies the rule.
 - An `MCPToolset` built by a helper/factory or referenced as a bare variable in
   `tools=` escapes hosted-tool classification entirely (ADK-111 false negative),
   and the filter check is per agent — one filtered toolset hides an unfiltered

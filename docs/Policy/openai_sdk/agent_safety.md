@@ -58,6 +58,11 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
+  - id: OAI-120
+    severity: low
+    confidence: 0.55
+    scope: agent
+    fix_type: code
 references: [LLM01, LLM06, LLM10]
 ---
 
@@ -65,9 +70,9 @@ references: [LLM01, LLM06, LLM10]
 
 **Policy ID:** `openai_sdk_agent_safety`  
 **File:** `openai_sdk/agent_safety.yaml`  
-**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-109, OAI-110, OAI-112, OAI-105, OAI-107, OAI-114, OAI-113  
-**Severities:** high, high, high, medium, high, medium, low, high, high, high, medium  
-**Fix types:** config, config, config, config, config, config, config, config, config, config, config  
+**Rules:** OAI-101, OAI-102, OAI-103, OAI-104, OAI-109, OAI-110, OAI-112, OAI-105, OAI-107, OAI-114, OAI-113, OAI-120  
+**Severities:** high, high, high, medium, high, medium, low, high, high, high, medium, low  
+**Fix types:** config, config, config, config, config, config, config, config, config, config, config, code  
 **References:** LLM01, LLM06, LLM10
 
 ---
@@ -582,6 +587,37 @@ guardrail satisfies the clause exactly as it satisfies OAI-101. The 0.6 matches
 OAI-113 because the dominant uncertainty — the closure's blind spots and the
 filter blindness — is shared.
 
+### OAI-120 — OpenAI Agents SDK run call has no wall-clock timeout (Severity: low, Confidence: 0.55, Fix type: code)
+
+**What we detect:** an `Agent` / `SandboxAgent` with at least one resolvable
+`Runner.run` / `run_sync` / `run_streamed` call (same-file, non-opaque, matched by
+agent variable name) where none of those calls sits structurally inside an
+`asyncio.wait_for(...)` argument or an `asyncio.timeout` / `anyio.move_on_after` /
+`anyio.fail_after` `with` block (predicate
+`agent_run_call_wall_clock_timeout_missing`). The ancestor walk stops at the
+enclosing function, and a call in the context-manager *expression* is not credited —
+only the body is bounded. A timeout block elsewhere in the file that does not
+enclose the call is not credited.
+
+**Why it is flaggable:** `max_turns` (OAI-112) bounds how many turns the loop takes,
+not how long one turn can block. A stalled model request or a slow tool call hangs
+the run indefinitely while it holds the worker, tool credentials and any open
+sandbox. A run can sit well below `max_turns` and never return.
+
+**Real-world consequence:** a provider connection stalls mid-response; the request
+handler awaiting `Runner.run(...)` never returns, workers accumulate until the pool
+is exhausted, and the sandbox the agent opened stays up and billed.
+
+**Why severity is low and not medium:** the SDK client carries its own network
+timeouts that bound the worst stalls, so the residual risk is a long, not infinite,
+hang in most deployments; it is an availability and cost concern, not a data or
+integrity exposure. **Fix type — code:** the timeout wraps the call site.
+
+**Confidence 0.55:** the check sees only the immediate function. A timeout applied
+by the caller of the function containing the run call, by a middleware, or by the
+process supervisor satisfies the intent but is invisible here, so the rule
+over-flags library-style code whose callers own the deadline.
+
 ---
 
 ## What this policy does not cover
@@ -623,6 +659,11 @@ filter blindness — is shared.
   the same agent leave it uncapped. The SDK's actual `DEFAULT_MAX_TURNS`
   behavior is not independently verified for this doc beyond the language
   already present in the shipped rule's own explanation text.
+- For OAI-120: a deadline applied by a caller, middleware, task supervisor or
+  process manager is invisible — only a wrapper enclosing the run call inside the
+  same function is credited. A `wait_for` with an absurdly large timeout satisfies
+  the rule without bounding anything useful. Cross-file agent-to-run correlation is
+  not attempted (same as OAI-112).
 
 ---
 

@@ -13,17 +13,27 @@ rules:
     confidence: 0.6
     scope: tool
     fix_type: code
-references: [LLM06, LLM02]
+  - id: CSDK-024
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+  - id: CSDK-025
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+references: [LLM06, LLM02, LLM01]
 ---
 
 # Policy Rationale: Server-Side Request Forgery
 
 **Policy ID:** `claude_sdk_ssrf`  
 **File:** `claude_sdk/ssrf.yaml`  
-**Rules:** CSDK-009, CSDK-013  
-**Severities:** high, high  
-**Fix types:** code, code  
-**References:** LLM06, LLM02
+**Rules:** CSDK-009, CSDK-013, CSDK-024, CSDK-025  
+**Severities:** high, high, medium, medium  
+**Fix types:** code, code, code, code  
+**References:** LLM06, LLM02, LLM01
 
 > This is the canonical SSRF rationale for the rulebook. The OpenAI (OAI-018) and
 > Google ADK (ADK-012) SSRF rules cross-reference this document for the shared
@@ -171,6 +181,84 @@ object rather than the first positional argument (`axios({ url })`,
 `fetch(req)` where `req` is a `Request`), or a URL assembled in a helper, all
 evade the first-argument check.
 
+### CSDK-024 — Claude SDK tool fetches an allow-listed host without pinning https:// (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a Python tool whose body checks the destination host against a named allow-list (the same `has_body_text` credit that silences CSDK-009) and makes a recognized HTTP call (`requests`/`httpx`/`urllib`/aliased clients) with a dynamic URL that neither starts with a literal `https://` prefix nor is guarded by a scheme check (`.scheme ==`/`!=`/`in`/`not in`, `startswith("https://")`). Backed by `has_unpinned_scheme_url_call`, which treats an f-string, `+` concatenation, `%`-format, or `.format()` call whose leftmost literal starts with `https://` as pinned.
+
+**Why it is flaggable:** the allow-list (CSDK-009's credit) constrains *where* the request goes, not *how*. An `http://` URL for an allowed
+host passes the host check, so request headers (API keys, bearer tokens) and bodies travel in cleartext, and a network-path attacker can read
+them or rewrite the response. The response re-enters the model's context as trusted tool output, which makes tampering a prompt-injection channel.
+A redirect from the allowed host to `http://` has the same effect.
+
+**Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
+and integrity loss of the content the model reasons over.
+
+**Why medium / 0.6:** medium rather than CSDK-009's high because the host is already bounded, so the residual risk needs a network-path attacker
+rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
+another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+
+**Staging:** the rule requires the allow-list credit to be present, so CSDK-009 and CSDK-024 never fire on the same tool: SSRF first, then HTTPS once a host
+allow-list exists.
+
+**What this does not cover:** a fully literal `http://` URL (not dynamic, so outside the SSRF family); scheme validation in another function
+or file; HTTPS downgrade via a redirect chain the rule cannot trace; and HSTS or transport policy configured outside the tool body.
+
+**Safe-code recommendation:**
+
+```python
+ALLOWED_HOSTS = {"api.example.com"}
+
+def fetch(path: str) -> str:
+    url = f"https://api.example.com/{quote(path)}"   # scheme is a literal
+    if urlparse(url).hostname not in ALLOWED_HOSTS:
+        raise ValueError("host not allowed")
+    return requests.get(url, timeout=10, allow_redirects=False).text
+```
+
+### CSDK-025 — TypeScript Claude SDK tool fetches an allow-listed host without pinning https:// (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a TypeScript tool whose body checks `.hostname`/`.host` against an allow-list (the positive form of the credit that silences CSDK-013) and calls `fetch`/`axios`/`got`/`undici` with a dynamic URL that neither starts with a literal `https://` prefix nor is guarded by a `.protocol` comparison or `startsWith("https:")`. Backed by the `url_scheme_unpinned` handler fact computed beside `dynamic_url`; a template string or `+` concatenation whose leftmost fragment is a literal `https://` is treated as pinned.
+
+**Why it is flaggable:** the allow-list (CSDK-013's credit) constrains *where* the request goes, not *how*. An `http://` URL for an allowed
+host passes the host check, so request headers (API keys, bearer tokens) and bodies travel in cleartext, and a network-path attacker can read
+them or rewrite the response. The response re-enters the model's context as trusted tool output, which makes tampering a prompt-injection channel.
+A redirect from the allowed host to `http://` has the same effect.
+
+**Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
+and integrity loss of the content the model reasons over.
+
+**Why medium / 0.6:** medium rather than CSDK-013's high because the host is already bounded, so the residual risk needs a network-path attacker
+rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
+another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+
+**Staging:** the rule requires the allow-list credit to be present, so CSDK-013 and CSDK-025 never fire on the same tool: SSRF first, then HTTPS once a host
+allow-list exists.
+
+**What this does not cover:** a fully literal `http://` URL (not dynamic, so outside the SSRF family); scheme validation in another function
+or file; HTTPS downgrade via a redirect chain the rule cannot trace; and HSTS or transport policy configured outside the tool body.
+
+**Safe-code recommendation:**
+
+```ts
+const ALLOWED = new Set(["api.example.com"]);
+
+const url = new URL(`https://api.example.com/${encodeURIComponent(path)}`); // scheme is a literal
+if (!ALLOWED.has(url.hostname)) throw new Error("host not allowed");
+const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+```
+
+---
+
+## Allow-list credit
+
+CSDK-009, CSDK-013 used to fire on every non-literal destination, including tools that had already constrained the host, which made the rule a false-positive source for exactly the code that followed its own fix advice. The match is now `has_dynamic_url_call` **and not** a recognized host allow-list in the tool body. Severity, confidence and scope are unchanged.
+
+**Python (CSDK-009).** The rule is silenced when the function body contains a hostname membership test against a named allow-list: `.hostname not in`, `.netloc not in`, or one of `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `allowed_hosts`, `allowed_domains`, `HOST_ALLOWLIST`, `host_allowlist` (predicate `not: has_body_text`). A bare `.hostname in` is deliberately *not* credited, because it cannot tell an allow-list from a deny-list.
+
+**TypeScript (CSDK-013).** The rule is silenced when the handler both reads a host (`.hostname` / `.host`) and tests membership (`.includes(` / `.has(`), or references a named allow-list (`allowedHosts`, `allowedDomains`, `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `hostAllowlist`). Reading `new URL(x).hostname` with no membership test does not silence it.
+
+The credit is textual and body-local. It does not verify that the allow-list is correct, that the check runs before the request, or that the request cannot be redirected to a host outside it; HTTPS-only enforcement and a redirect cap are recommended in each rule's fix text but are not separately detected.
+
 ---
 
 ## What this policy does not cover
@@ -190,6 +278,7 @@ evade the first-argument check.
   `XMLHttpRequest`, and `superagent` — do not fire. A model-controlled URL passed
   in an options object (`axios({ url })`) rather than as the first positional
   argument also evades the first-argument check.
+- An allow-list enforced in a helper or middleware outside the tool body, an allow-list check that uses a name outside the recognized set, and a membership test that is unrelated to the URL host but happens to sit beside a `.host` read (TypeScript over-credit). Redirects and non-HTTPS schemes are not detected.
 
 ---
 

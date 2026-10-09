@@ -97,17 +97,34 @@ crate, `#[tool]`-attributed methods).
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
-An MCP server publishes its tool catalog — names, descriptions, and input
-schemas — across a transport to **whatever client and model connect to it**.
-The author does not control, and often cannot see, the consuming agent. A weak
-description or an unconstrained schema therefore degrades tool selection for
-every consumer of the server, and an ambiguous name collides more easily with
-similarly-named tools from other servers mounted in the same session. The model
-routes on the published metadata; that metadata is the entire contract.
+MCP servers sit across a trust boundary. The tool description is published to every connecting client and becomes the primary signal a model uses when deciding whether (and how) to call the tool. 
+
+Unlike a normal library function that is called by code the author controls, an MCP tool is discovered and selected at runtime by a language model that has never seen the implementation. When the description is missing or weak, the model is forced to guess from the tool name alone. This produces wrong-tool selection, skipped calls, and hallucinated arguments — and the failure affects every agent that mounts the server.
+
+Because the description is the main routing signal across an untrusted boundary, its absence is a reliability defect even when the tool code itself is correct.
 
 ---
 
 ## Rule-by-rule defense
+
+**Why this policy is scored low.** Every rule here except MCP-002 is low
+severity, and that is deliberate rather than an oversight repeated eleven times.
+A missing description or an ambiguous name degrades *selection*, not safety: the
+tool still does exactly what it did, nothing new becomes reachable, and no
+attacker gains a primitive. What is lost is the model's ability to choose
+correctly — wrong-tool calls, skipped calls, wasted turns — which is a cost paid
+in reliability.
+
+Two things stop it being scored lower still. The cost lands on people who did not
+write the tool: an MCP server publishes its catalog to clients its author does
+not control, so a bad name is a defect exported to every session that mounts it.
+And a definition is the one thing a connecting model cannot inspect its way
+around — it has the name, the description, and the schema, and nothing else.
+
+MCP-002 is medium because it is the only rule in the policy that weakens a
+*boundary* rather than a signal: the published schema is what constrains the
+input a handler receives, and an unconstrained schema pushes validation into the
+handler body, where it is easy to omit.
 
 ### MCP-001 — Tool has no description (Severity: low, Confidence: 0.9, Fix type: code)
 
@@ -134,6 +151,13 @@ so connecting models send inputs the handler cannot rely on and runtime errors
 surface inside the server. Medium severity: degraded validation is a
 reliability and minor injection-surface concern, not a direct compromise.
 
+**Confidence 0.85:** the predicate reads the signature, so it is right about what
+it saw — the residual gap is a handler that publishes a schema some other way,
+such as one typed argument carrying a Pydantic model while the remaining
+parameters stay bare, which still fires. It does not fire on a handler that takes
+no parameters at all (`has_params` gates it), so the common no-argument tool is
+not swept up.
+
 ### MCP-003 — Ambiguous tool name (Severity: low, Confidence: 0.85, Fix type: code)
 
 **What we detect:** a tool named from a fixed ambiguous set (`process`,
@@ -142,6 +166,13 @@ reliability and minor injection-surface concern, not a direct compromise.
 **Why it is flaggable:** an ambiguous name gives the model no intent signal and
 collides across servers in a shared session. Because an MCP server's consumers
 are not controlled by the author, the cost is paid everywhere it is mounted.
+
+**Confidence 0.85:** the match is exact against a closed list, so a finding is
+never a misreading — the 0.15 is for the case where the name is genuinely
+unambiguous in context, a single-purpose server whose own name supplies the noun.
+The far larger gap is recall, not precision: `search`, `update`, and `get` are
+just as ambiguous in a merged catalog and are not on the list. A clean scan means
+the tool avoided ten specific words, not that its name is good.
 
 ### MCP-011 — TypeScript MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
@@ -178,6 +209,12 @@ ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
 no intent signal and collides across servers in a shared session, and the cost is
 paid by every uncontrolled consumer of the published catalog.
 
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the Go list holds nine names, not MCP-003's
+ten: `go` is omitted, since it is far more likely to be an ordinary word here
+than an ambiguous tool name.
+
 ### MCP-017 — C# MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
 **What we detect:** an `[McpServerTool]`-attributed C# method with no co-located
@@ -197,6 +234,12 @@ SDK default) is in the fixed ambiguous set (`process`, `handle`, `run`, ...) via
 
 **Why it is flaggable:** identical to MCP-003 / MCP-016 — an ambiguous name gives
 the model no intent signal and collides across servers in a shared session.
+
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the C# list holds nine names, not MCP-003's
+ten: `go` is omitted, since it is far more likely to be an ordinary word here
+than an ambiguous tool name.
 
 ### MCP-019 — PHP MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
@@ -222,6 +265,12 @@ ambiguous set (`process`, `handle`, `run`, ...) via `name_in`.
 name gives the model no intent signal and collides across servers in a shared
 session, and the cost is paid by every uncontrolled consumer of the published
 catalog.
+
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the PHP list holds nine names, not
+MCP-003's ten: `go` is omitted, since it is far more likely to be an ordinary
+word here than an ambiguous tool name.
 
 ### MCP-021 — Rust MCP tool has no description (Severity: low, Confidence: 0.85, Fix type: code)
 
@@ -249,6 +298,12 @@ ambiguous name gives the model no intent signal and collides across servers in a
 shared session, and the cost is paid by every uncontrolled consumer of the
 published catalog.
 
+**Confidence 0.85:** same calibration as MCP-003 — an exact match against a
+closed list, so the number reflects how often such a name is defensible rather
+than any doubt about the match. Note the Rust list holds nine names, not
+MCP-003's ten: `go` is omitted, since it is far more likely to be an ordinary
+word here than an ambiguous tool name.
+
 ---
 
 ## What this policy does not cover
@@ -275,3 +330,79 @@ untyped-params has no analog (Rust is statically typed, and the input schema liv
 in a separate `#[derive(JsonSchema)]` struct passed via `Parameters<T>`, which is
 not yet resolved); raw-string descriptions, `#[tool]` on free functions outside an
 `impl`, the `#[prompt]` / resource shapes, and body-fact rules await later work.
+
+---
+
+## Recommendations beyond the fix
+
+```python
+from typing import Literal
+
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("billing")
+
+
+@mcp.tool()
+def find_invoices_by_customer(
+    customer_id: str,
+    status: Literal["draft", "open", "paid", "void"] = "open",
+    limit: int = 20,
+) -> dict:
+    """Search invoices for one customer, newest first.
+
+    Read-only. Use this to answer questions about a customer's billing history;
+    use `create_invoice` to issue a new one. Returns at most `limit` invoices,
+    or an empty list when the customer has none matching `status`.
+    """
+    ...
+```
+
+Three things carry across the boundary here, and all three are published to
+every connecting client: the name says what the tool does to what noun, the
+annotations become the input schema, and the docstring says when to reach for
+this tool rather than a neighboring one.
+
+The definition-hygiene rationale is in
+[openai_sdk/tool_definition.md](../openai_sdk/tool_definition.md#recommendations-beyond-the-fix).
+MCP-specific additions:
+
+1. Write the description for a model that cannot see your server. An in-process
+   SDK tool is chosen from a catalog its author assembled; an MCP tool is chosen
+   from a merged catalog assembled by whoever connected, alongside tools this
+   author has never seen. Say what the tool does, whether it mutates anything,
+   and what the *neighboring* choice is — that last part is what a merged
+   catalog destroys and what no schema can encode.
+2. Name the object, not just the verb. These rules match a fixed list —
+   `process`, `handle`, `run`, `do`, `execute`, `perform`, `work`, `thing`,
+   `stuff`, plus `go` on the Python rule only — which is a floor, not a
+   standard. `search` and `update` pass every one of them and collide just as
+   badly across servers in one session; `find_invoices_by_customer` cannot.
+3. Constrain enumerable parameters in the type, not in the prose. `Literal[...]`
+   becomes an enum in the published schema, so a connecting client can reject a
+   bad value before it reaches your handler — where "status must be one of ..."
+   in a docstring is advice a model may or may not take.
+4. Say it in the language the SDK actually reads. The rules check the mechanism
+   each SDK publishes from, so the fix differs by language even though the
+   finding does not:
+
+   | SDK | Where the description comes from |
+   |---|---|
+   | Python (MCP-001) | the handler's docstring, or `description=` on the registration |
+   | TypeScript (MCP-011) | the `description` field on the tool registration |
+   | Go (MCP-015) | `mcp.WithDescription(...)`, or the `Description` field of `mcp.Tool` |
+   | C# (MCP-017) | a `[Description("...")]` attribute beside `[McpServerTool]` |
+   | PHP (MCP-019) | the `description:` argument of `#[McpTool]` |
+   | Rust (MCP-021) | `description = "..."` on `#[tool]`, **or** the `///` doc comment |
+
+   The Rust case is the one worth knowing: a tool documented the idiomatic way,
+   with a `///` comment and no attribute argument, has a description and does
+   not fire.
+5. Treat the description as versioned interface. Clients cache tool catalogs and
+   models are steered by the text; changing what a tool claims to do is a
+   behavioral change to every agent connected to the server, even though no
+   handler code moved.
+6. Remember what the rules cannot check: that the description is *true*. A tool
+   named `get_*` whose docstring promises a read and whose body writes will pass
+   every rule in this policy, and it is the failure that costs most — the model
+   selected it precisely because the definition said it was safe.
