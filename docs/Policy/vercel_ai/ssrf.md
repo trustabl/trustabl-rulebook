@@ -8,17 +8,22 @@ rules:
     confidence: 0.75
     scope: tool
     fix_type: code
-references: [LLM06]
+  - id: VAI-021
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+references: [LLM06, LLM02, LLM01]
 ---
 
 # Policy Rationale: Vercel AI SDK Server-Side Request Forgery
 
 **Policy ID:** `vercel_ai_ssrf`  
 **File:** `vercel_ai/ssrf.yaml`  
-**Rules:** VAI-003  
-**Severities:** high  
-**Fix types:** code  
-**References:** LLM06 (Excessive Agency)
+**Rules:** VAI-003, VAI-021  
+**Severities:** high, medium  
+**Fix types:** code, code  
+**References:** LLM06 (Excessive Agency), LLM02, LLM01
 
 ---
 
@@ -81,13 +86,53 @@ tools that fetch a dynamic-but-vetted endpoint and under-fires when the URL is
 assembled in a helper in another module, which is why confidence sits below the
 shell/eval rules.
 
+### VAI-021 — TypeScript Vercel AI SDK tool fetches an allow-listed host without pinning https:// (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a TypeScript tool whose body checks `.hostname`/`.host` against an allow-list (the positive form of the credit that silences VAI-003) and calls `fetch`/`axios`/`got`/`undici` with a dynamic URL that neither starts with a literal `https://` prefix nor is guarded by a `.protocol` comparison or `startsWith("https:")`. Backed by the `url_scheme_unpinned` handler fact computed beside `dynamic_url`; a template string or `+` concatenation whose leftmost fragment is a literal `https://` is treated as pinned.
+
+**Why it is flaggable:** the allow-list (VAI-003's credit) constrains *where* the request goes, not *how*. An `http://` URL for an allowed
+host passes the host check, so request headers (API keys, bearer tokens) and bodies travel in cleartext, and a network-path attacker can read
+them or rewrite the response. The response re-enters the model's context as trusted tool output, which makes tampering a prompt-injection channel.
+A redirect from the allowed host to `http://` has the same effect.
+
+**Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
+and integrity loss of the content the model reasons over.
+
+**Why medium / 0.6:** medium rather than VAI-003's high because the host is already bounded, so the residual risk needs a network-path attacker
+rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
+another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+
+**Staging:** the rule requires the allow-list credit to be present, so VAI-003 and VAI-021 never fire on the same tool: SSRF first, then HTTPS once a host
+allow-list exists.
+
+**What this does not cover:** a fully literal `http://` URL (not dynamic, so outside the SSRF family); scheme validation in another function
+or file; HTTPS downgrade via a redirect chain the rule cannot trace; and HSTS or transport policy configured outside the tool body.
+
+**Safe-code recommendation:**
+
+```ts
+const ALLOWED = new Set(["api.example.com"]);
+
+const url = new URL(`https://api.example.com/${encodeURIComponent(path)}`); // scheme is a literal
+if (!ALLOWED.has(url.hostname)) throw new Error("host not allowed");
+const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+```
+
+---
+
+## Allow-list credit
+
+VAI-003 used to fire on every non-literal destination, including tools that had already constrained the host, which made the rule a false-positive source for exactly the code that followed its own fix advice. The match is now `has_dynamic_url_call` **and not** a recognized host allow-list in the tool body. Severity, confidence and scope are unchanged.
+
+**TypeScript (VAI-003).** The rule is silenced when the handler both reads a host (`.hostname` / `.host`) and tests membership (`.includes(` / `.has(`), or references a named allow-list (`allowedHosts`, `allowedDomains`, `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `hostAllowlist`). Reading `new URL(x).hostname` with no membership test does not silence it.
+
+The credit is textual and body-local. It does not verify that the allow-list is correct, that the check runs before the request, or that the request cannot be redirected to a host outside it; HTTPS-only enforcement and a redirect cap are recommended in each rule's fix text but are not separately detected.
+
 ---
 
 ## What this policy does not cover
 
-- A request whose URL is dynamic but already validated against an allow-list
-  inside the handler — the fact cannot see the guard, so it fires anyway (a known
-  false positive, and the main reason confidence is 0.75).
+- A request whose URL is dynamic but already validated against an allow-list inside the handler under a name the fact does not recognize — the credit only sees the names listed under Allow-list credit, so it still fires (a known false positive, and part of why confidence is 0.75).
 - A fetch assembled in a helper in another module — discovery sees the handler, so
   a wrapper elsewhere escapes the fact.
 - DNS-rebinding and time-of-check/time-of-use attacks against an allow-list that
@@ -98,6 +143,7 @@ shell/eval rules.
   gap.
 - Exfiltration or internal access through non-HTTP primitives (raw sockets, DNS)
   belongs to other concerns.
+- An allow-list enforced in a helper or middleware outside the tool body, an allow-list check that uses a name outside the recognized set, and a membership test that is unrelated to the URL host but happens to sit beside a `.host` read (TypeScript over-credit). Redirects and non-HTTPS schemes are not detected.
 
 ---
 

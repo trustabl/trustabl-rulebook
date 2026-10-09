@@ -9,6 +9,11 @@ on:
   pull_request:
   push:
     branches: [main]
+  # The PDF is this repo's product and is built only as a CI artifact, so
+  # without this there is no way to produce one without pushing a commit —
+  # including after a trustabl-rules change that the rulebook itself does not
+  # reflect in a diff.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -62,6 +67,11 @@ jobs:
       # matches the pack. --strict also fails on any doc missing front-matter.
       - name: Consistency gate
         run: python tools/check_rulebook.py --rules-repo .rules --strict
+
+      # Every relative link and #anchor between docs resolves. Needs no rules
+      # checkout: this one is purely about the rulebook's internal wiring.
+      - name: Internal links resolve
+        run: python tools/check_links.py
 
       # The committed POLICY_INDEX files match what the generator would produce.
       - name: Index is up to date

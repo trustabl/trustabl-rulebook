@@ -63,17 +63,22 @@ rules:
     confidence: 0.75
     scope: agent
     fix_type: config
-references: [LLM01, LLM06]
+  - id: CSDK-114
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
+references: [LLM01, LLM06, LLM10]
 ---
 
 # Policy Rationale: Subagent Wiring Safety
 
 **Policy ID:** `claude_sdk_agent_safety`  
 **File:** `claude_sdk/agent_safety.yaml`  
-**Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120, CSDK-121, CSDK-122, CSDK-123, CSDK-124, CSDK-130, CSDK-131  
-**Severities:** high, medium, critical, high, high, critical, high, medium, high, high, high, high  
-**Fix types:** config, config, config, config, config, config, config, config, config, config, config, config  
-**References:** LLM01, LLM06
+**Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120, CSDK-121, CSDK-122, CSDK-123, CSDK-124, CSDK-130, CSDK-131, CSDK-114  
+**Severities:** high, medium, critical, high, high, critical, high, medium, high, high, high, high, low  
+**Fix types:** config, config, config, config, config, config, config, config, config, config, config, config, config  
+**References:** LLM01, LLM06, LLM10
 
 ---
 
@@ -496,6 +501,52 @@ cannot see. **False negatives:** a grant supplied through a non-literal
 (non-built-in) tool wired into the thread, which the built-in-name match does not
 cover.
 
+### CSDK-114 — TypeScript query() main agent sets no maxBudgetUsd spend cap (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+A `query(...)` main agent (`claude_query_main`) whose `options` object was captured
+inline and sets no `options.maxBudgetUsd` (predicate `agent_kwarg_missing:
+[options.maxBudgetUsd]`), gated by `agent_kwarg_present` over ten option keys
+(`model`, `allowedTools`, `disallowedTools`, `permissionMode`, `maxTurns`,
+`systemPrompt`, `cwd`, `mcpServers`, `agents`, `hooks`). The gate exists because a
+missing nested key is indistinguishable from an options object the analyzer never
+saw: when `options` is a variable, an import, or a spread, the tree has no children
+and the missing-key predicate would fire on every such call. Requiring at least one
+known sibling key proves the literal was read.
+
+**Why it is flaggable:**
+`maxBudgetUsd` is the SDK's native dollar ceiling on a session; the run stops when
+it is reached. Without it the only bound on spend is the turn count, and `maxTurns`
+is itself optional. A prompt-injected or looping session keeps issuing model and
+tool calls, and each turn re-sends the accumulated context, so cost per turn grows
+as the run goes on (LLM10, Unbounded Consumption).
+
+**Real-world consequence:**
+A batch worker runs `query()` over a queue of user-supplied documents. One
+document instructs the agent to "keep refining until perfect"; the session loops
+on a large context for hours and the overnight run's bill is a multiple of the
+whole previous month's.
+
+**Why severity is low and not medium:**
+The exposure is financial and bounded by wall-clock and the provider's own rate and
+spend limits, not a confidentiality or integrity break; nothing here grants the
+model a capability it did not already have. It is a hygiene control whose absence is
+worth surfacing, not a defect.
+
+**Fix type — config:**
+One option on the `query()` call, no tool source changes.
+
+**Confidence 0.6:**
+**False positives:** a run capped elsewhere (a gateway or provider-side spend limit,
+an external wall-clock kill, or a per-tenant budget enforced in the caller) is
+flagged because none of that is visible in the call. **False negatives:** options
+supplied through a variable, import or spread stay silent by design; an inline
+`options: {}` (or one carrying only keys outside the ten-key list) is silent; and
+the check is presence-only, so `maxBudgetUsd: 10000` satisfies it. The Python
+`ClaudeAgentOptions(max_budget_usd=...)` sibling is not shipped because no
+predicate reads that constructor's kwargs at agent scope (it needs a repo-scope
+predicate mirroring `repo_claude_options_max_turns_missing`).
+
 ---
 
 ## What this policy does not cover
@@ -514,6 +565,11 @@ cover.
   non-literal `options.allowedTools` (a variable the static read cannot resolve),
   and any of these capabilities delivered through a custom (non-built-in) tool —
   the grant check matches the built-in tool names only.
+- For CSDK-114: budgets enforced outside the call (a gateway, a provider-side spend
+  limit, a caller-side per-tenant meter), `options` that is not an inline object
+  literal, and the Python `ClaudeAgentOptions(max_budget_usd=...)` form — none are
+  visible to the rule. Per-run cost caps on other SDKs are not modeled at all
+  (most have no native cap).
 
 ---
 

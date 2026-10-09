@@ -4,3 +4,7 @@
 # Python
 __pycache__/
 *.pyc
+
+# The CI workflow checks trustabl-rules out here (actions/checkout path: .rules).
+# Mirroring that locally — `--rules-repo .rules` — should not dirty the tree.
+/.rules/

@@ -28,6 +28,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: AG2-021
+    severity: low
+    confidence: 0.5
+    scope: agent
+    fix_type: code
 references: [LLM05, LLM06, LLM10]
 ---
 
@@ -35,9 +40,9 @@ references: [LLM05, LLM06, LLM10]
 
 **Policy ID:** `autogen_agent_safety`  
 **File:** `autogen/agent_safety.yaml`  
-**Rules:** AG2-001, AG2-002, AG2-004, AG2-005, AG2-006  
-**Severities:** high, high, low, medium, medium  
-**Fix types:** config, config, config, config, config  
+**Rules:** AG2-001, AG2-002, AG2-004, AG2-005, AG2-006, AG2-021  
+**Severities:** high, high, low, medium, medium, low  
+**Fix types:** config, config, config, config, config, code  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -209,6 +214,49 @@ constructor.
 
 ---
 
+### AG2-021 — Chat or run call has no wall-clock timeout (Severity: low, Confidence: 0.5, Fix type: code)
+
+**What we detect:** an AutoGen / AG2 agent that takes part in a same-file
+`initiate_chat` / `a_initiate_chat` / `run` / `a_run` / `run_stream` call, where
+NONE of those calls sits structurally inside an `asyncio.wait_for(...)` argument
+or an `asyncio.timeout` / `anyio.move_on_after` / `anyio.fail_after` `with` body,
+and none passes a non-`None` `cancellation_token=` (predicate
+`agent_run_call_wall_clock_timeout_missing`). For `initiate_chat` both the
+receiver and the recipient (first positional identifier or `recipient=`) are
+attributed, because both agents sit in the conversation. Team classes
+(`RoundRobinGroupChat`, ...) are not discovered as agents, so a `team.run(...)`
+never correlates.
+
+**Why it is flaggable:** `max_turns`, `max_round`, and `max_consecutive_auto_reply`
+bound how many exchanges happen, not how long one may block. A stalled model
+request, a slow tool, or a hung code-execution step holds the whole conversation
+open, and the agent's executor (and any container it started) with it. The only
+bounds are the caller's: an enclosing asyncio/anyio timeout, or on the v0.4 line
+a `cancellation_token`. The synchronous AG2 `initiate_chat` / `run` cannot be
+wrapped in an asyncio timeout at all, so they always fire — the remedy is the
+`a_` variant.
+
+**Real-world consequence:** a code-executing agent stuck on a hung subprocess
+keeps its executor and credentials live indefinitely; in a service, stuck chats
+accumulate until workers are exhausted.
+
+**Why low and not medium:** an availability and cost amplifier, not a
+confidentiality or integrity break, and the count limits already bound the
+loop's length; a deployment-level kill timer often exists outside this code.
+
+**Fix type — code:** use the async entry point and wrap it
+(`await asyncio.wait_for(agent.a_initiate_chat(...), timeout=...)`), pass a
+`cancellation_token`, or add a `TimeoutTermination` to the v0.4 team — a call-site
+change, not agent configuration.
+
+**Confidence 0.5:** a timeout applied by the caller of the containing function, or
+a deployment deadline, is invisible here. A `TimeoutTermination` on a team, and a
+`llm_config` per-request `timeout`, bound time but are not credited (the first is
+on an undiscovered team object; the second bounds one request, not the chat). A
+`cancellation_token` that is never cancelled satisfies the check.
+
+---
+
 ## What this policy does not cover
 
 - Code execution wired by hand inside a tool body rather than via an executor —
@@ -219,6 +267,10 @@ constructor.
   hardened (Docker, human review) — it flags the boundary collapse regardless.
 - Loop bounds enforced outside the constructor (an external timeout, a custom
   speaker-selection or reply handler) are invisible to AG2-004 / AG2-006.
+- Time bounds that AG2-021 cannot see: a `TimeoutTermination` on a v0.4 team, a
+  per-request `llm_config` timeout, a timeout around the caller of the function
+  containing the run call, or an external deadline. A `cancellation_token` that is
+  passed but never cancelled also satisfies the rule.
 - The newer `autogen-agentchat` (v0.4+) API surface and its
   `CodeExecutorAgent` / executor classes are matched only insofar as discovery
   normalizes them to these agent kinds; configs expressed through a different
