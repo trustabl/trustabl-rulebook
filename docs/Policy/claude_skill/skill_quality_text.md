@@ -129,11 +129,22 @@ forcing a citation that wouldn't survive scrutiny.
 
 ### CSKILL-080 — Skill claims cryptographic operations (Severity: high, Confidence: 0.75, Fix type: config)
 
-**What we detect:** `skill_name_has_text` OR `skill_description_has_text`
-matches any of `crypto`, `encrypt`, `decrypt`, `sign`, `hash`, `certificate`,
-`signing`, `cipher`, `asymmetric`, `symmetric` — a case-insensitive substring
-search of the skill's `name` field or its `description` field. The body is
-never scanned by this rule.
+**What we detect:** `skill_text_matches` over the skill's `name` and
+`description` fields against `crypto`, `cryptographic`, `encrypt`, `decrypt`,
+`cipher`, `certificate`, `keypair`, `private key`, `sign`, `signature`,
+`hash`, `hmac`, `asymmetric`, `symmetric`, with `exclude_context: [example,
+for instance, e.g., such as, sample, documented, documentation, see the,
+refer to, placeholder]`. Unlike the raw-substring `skill_*_has_text`
+predicates, this splits each field into sentences and matches terms at word
+boundaries (allowing inflections — `sign` also matches `signs`/`signed`/
+`signing`, but not `design`/`assign`/`signal`), then discards a sentence hit
+that also matches an exclude-context phrase (a documentation pointer or a
+worked example, not a claim the skill itself performs the operation). The
+body is still never scanned by this rule. This replaced a bare
+`skill_name_has_text`/`skill_description_has_text` substring match after
+confirmed false positives from outreach feedback: a skill listing "hash a
+string" as an example tool call, and a substring artifact where a common
+word fragment (not a whole-word crypto term) tripped the old match.
 
 **Why it is flaggable:** A name or description that raises a crypto term
 with no primitive, key source, or algorithm named gives Claude no
@@ -161,30 +172,46 @@ unverified implementation, not a demonstrated flaw.
 **Fix type — config:** Add the missing specifics to the description or
 body text — no source or bundled-file change needed.
 
-**Confidence 0.75:** Because the match is a raw substring, several of these
-tokens are common word fragments, not whole-word hits. `sign` is a substring
-of `design`, `assign`, `signal`, and `significant` — a description that says
-"designed to process incoming files" trips this rule on `design` containing
-`sign`, with zero relation to cryptography. `hash` and `certificate` also
-have legitimate non-crypto senses (a content hash used for cache-busting, a
-completion certificate). **False negatives:** a skill can genuinely
-implement crypto described entirely in the body using terms this rule
-doesn't scan for at all (`AEAD`, `HMAC`, `JWT`, `PGP`, `bcrypt`, `argon2`),
-or the crypto terms can appear only in the body, which CSKILL-080 never
-reads.
+**Confidence 0.75:** Word-boundary matching with inflection support closes
+the substring-artifact false positives the raw predicate had (`design`,
+`assign`, `signal`, `hashmap` no longer match `sign`/`hash`), and
+`exclude_context` closes the confirmed "worked example" false positive
+("for example, hash a string" no longer fires). `certificate` still has a
+legitimate non-crypto sense (a completion certificate) with no exclude-
+context phrase to catch it, which is the residual false-positive surface.
+**False negatives:** a skill can genuinely implement crypto described
+entirely in the body using terms this rule doesn't scan for at all (`AEAD`,
+`JWT`, `PGP`, `bcrypt`, `argon2`), or the crypto terms can appear only in the
+body, which CSKILL-080 never reads; a term wrapped in an exclude-context
+phrase that is not actually documentation-only ("for instance, this skill
+encrypts every file it touches" — a genuine claim, not an example) also goes
+silent, since the predicate cannot distinguish rhetorical framing from a
+real disclaimer.
 
 ### CSKILL-081 — Skill processes sensitive data (Severity: high, Confidence: 0.7, Fix type: config)
 
-**What we detect:** `skill_body_has_text` OR `skill_description_has_text`
-matches any of `password`, `secret`, `token`, `ssn`, `credit card`, `pii`,
-`personal data`, `sensitive`, `confidential`, `private key` — substring
-search over the body or the description (not the name).
+**What we detect:** `skill_text_matches` over the skill's `description` and
+`body` fields against a sensitive-data-class term list (`password`, `secret`,
+`credential`, `token`, `api key`, `ssn`, `social security`, `credit card`,
+`pii`, `personal data`, `sensitive data`, `confidential`, `private key`),
+requiring the SAME sentence to also match an operational-verb term
+(`require_context`: `read`, `write`, `store`, `save`, `send`, `transmit`,
+`collect`, `process`, `handle`, `log`, `extract`, `parse`, `redact`,
+`encrypt`, `upload`, `post`, `fetch`, `retrieve`, `access`), and discarding a
+sentence that also matches `exclude_context` (`lives in`, `live in`,
+`configured in`, `see the`, `documentation`, `example`, `for instance`,
+`e.g.`). This replaced a bare `skill_body_has_text`/
+`skill_description_has_text` substring match after confirmed false
+positives from outreach feedback: a skill documenting "API keys live in
+GitHub Actions secrets" was flagged for merely naming where a credential
+lives, with no claim the skill itself touches it.
 
-**Why it is flaggable:** Naming a sensitive-data class without stating what
-the skill does with it — reads it, redacts it, retains it — leaves no
-data-minimization boundary for a reviewer to check. A skill that says
-nothing beyond naming the field could be scoped tightly or could be
-retaining everything it touches; the text alone doesn't distinguish the two.
+**Why it is flaggable:** Naming a sensitive-data class in the same sentence
+as an operational verb — reads it, stores it, sends it — is a claim that the
+skill actually handles that data, not just a reference to it, and doing so
+without stating a data-minimization boundary leaves no way for a reviewer to
+check whether the skill only touches the fields the task requires or
+retains everything it touches.
 
 **Real-world consequence:** A "customer-support" skill's body reads:
 "look up the account using the customer's SSN and password" with no
@@ -192,25 +219,33 @@ stated minimization or retention rule. Whatever tool call executes that
 lookup, and whatever gets echoed back into the transcript, now carries
 those fields with no documented boundary on where they end up next.
 
-**Why high and not critical:** A keyword hit proves the *topic* was
-named, not that real sensitive data flows through the skill — it could be
-a schema-field reference in the abstract, or defensive language ("never
-share the customer's password") rather than actual handling logic. Real
-damage depends on what the skill's tool calls (invisible to this rule)
-actually do with the field once named.
+**Why high and not critical:** A keyword-plus-verb hit proves the sentence
+*claims* to handle the data, not that the skill's actual tool calls do so
+correctly — it could still be defensive language phrased as an operation
+("never send the customer's password anywhere") that the `require_context`
+check cannot distinguish from a real one. Real damage depends on what the
+skill's tool calls (invisible to this rule) actually do with the field once
+named.
 
 **Fix type — config:** State which fields are read, why, and for how
 long — a description/body edit.
 
-**Confidence 0.7:** `secret` is a substring of `secretary` — a description
-mentioning "routes the request to the department secretary" trips this
-rule with no sensitive-data handling at all. `token` and `confidential` are
-similarly overloaded: a "pagination token" or "session token" is a
-routine engineering term, and "confidential" often appears defensively
-("never expose confidential data") rather than descriptively. **False
-negatives:** sensitive fields named by domain-specific terms outside this
-list — date of birth, routing number, medical record number, passport
-number — are invisible to the rule.
+**Confidence 0.7:** The `require_context` same-sentence check closes the
+confirmed "merely named, not handled" false positive (a sentence naming
+where a credential lives, with no operational verb, no longer fires), and
+word-boundary matching plus `sensitive data` (rather than a bare `sensitive`)
+closes substring artifacts like `case-insensitive`. Overloaded terms remain
+a residual gap: "the department secretary handles the request" would not
+false-fire on `secret` (word boundaries now require the whole word, and
+`secretary` is not a generated inflection of `secret`), but a sentence like
+"store the pagination token" or "the session token expires" still fires,
+since `token` in its routine engineering sense is indistinguishable from a
+credential token by this rule. **False negatives:** sensitive fields named
+by domain-specific terms outside this list — date of birth, routing number,
+medical record number, passport number — are invisible to the rule, as is a
+handling claim split across two sentences (e.g. "Handles customer PII." next
+sentence: "Reads it from the request body.") since `require_context` only
+looks within the same sentence as the data-class term.
 
 ### CSKILL-082 — Over-privileged security skill (Severity: high, Confidence: 0.8, Fix type: config)
 
@@ -421,13 +456,18 @@ exact two-word phrase, so "write the results out" doesn't match it.
   code at all), and a skill can implement genuinely correct error handling,
   purpose-scoping, or data minimization described in language none of these
   keyword lists anticipate.
-- **Substring, not word-boundary, matching.** Every predicate is
-  `strings.Contains`, so short or common fragments false-positive on
-  unrelated words that happen to contain them: `sign` inside `design` /
-  `assign` / `signal` (CSKILL-080), `secret` inside `secretary`
-  (CSKILL-081), `audit` inside `auditorium` and `scan` inside `scanner`
-  (CSKILL-082), `log` inside `catalog` / `dialog` / `logic` and `store`
-  inside `restore` (CSKILL-086).
+- **Substring, not word-boundary, matching — CSKILL-082..087 only.**
+  CSKILL-080 and CSKILL-081 were moved onto `skill_text_matches`, a
+  sentence-scoped, word-boundary predicate (see their entries above); the
+  remaining five rules in this pack still use the raw-substring
+  `skill_*_has_text` predicates (`strings.Contains`), so short or common
+  fragments still false-positive on unrelated words that happen to contain
+  them: `audit` inside `auditorium` and `scan` inside `scanner` (CSKILL-082),
+  `log` inside `catalog` / `dialog` / `logic` and `store` inside `restore`
+  (CSKILL-086). These five were not moved onto the new predicate because no
+  confirmed false positive has been reported against them yet — see
+  `CLAUDE.md`'s two-repo rule model for the sync obligation this would carry
+  if the fixture ever changed here without a matching production change.
 - **Field asymmetry across rules.** CSKILL-080 scans name and description
   only, never body; CSKILL-084 and CSKILL-086 scan body only, never
   description; a skill can pass any given rule simply by moving the
