@@ -241,6 +241,38 @@ satisfies it; `ToolLoopAgent` and calls with no explicit loop bound are silent.
 
 ---
 
+### VAI-020 — Tool loop has no abortSignal or timeout deadline (Severity: low, Confidence: 0.5, Fix type: config)
+
+**What we detect:** a `generateText` / `streamText` call that runs a multi-step
+tool loop (it sets `stopWhen` or `maxSteps`) and passes none of `abortSignal` or
+`timeout` (predicates `agent_class`, `agent_kwarg_present`, and two
+`agent_kwarg_missing`). `timeout` is the SDK's native time budget — a millisecond
+number or an object (`totalMs`, `stepMs`, ...) — and is credited the same as an
+`abortSignal`. A `ToolLoopAgent` is excluded: its signal is passed to
+`.generate()`, not the constructor.
+
+**Why it is flaggable:** the step bound limits how many round-trips happen, not
+how long they take. One step waiting on a slow tool or a stalled provider holds
+the request open with no deadline, and a disconnected caller cannot cancel it.
+Both `abortSignal` and `timeout` are explicit, checkable deadline hooks on the
+call itself; no Promise.race-style wrapper is needed or recognized.
+
+**Real-world consequence:** a stuck loop keeps its tools live and keeps spending
+tokens until the provider or runtime gives up — on serverless, until the platform
+kills the invocation, after billing for it.
+
+**Why low and not medium:** an availability and cost amplifier, bounded by the
+step count and often by a platform-level function timeout outside this code.
+
+**Fix type — config:** pass `timeout` or `abortSignal` in the call options.
+
+**Confidence 0.5:** a signal forwarded from an enclosing scope via a spread
+(`...options`) is not captured; a deadline set by the platform is invisible; and a
+`timeout` or `abortSignal` whose value is never meaningful (`undefined`, an
+already-aborted signal) is not distinguished from a real one.
+
+---
+
 ## What this policy does not cover
 
 - Code execution implemented by hand inside a tool's `execute()` body rather than
