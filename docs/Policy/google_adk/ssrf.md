@@ -142,9 +142,7 @@ CIDR is complementary defense in depth.
 **Confidence 0.6:**
 Matches the Python ADK-012's 0.6. The structural first-argument check correctly
 excludes a literal URL by construction, but two error modes keep it here. **False
-positives:** a non-literal URL that is in fact validated or constant — an ID checked
-against an allow-list in another module, or a base read from config — still fires,
-because the body-only walk does not see the validation and does not reason about
+positives:** a non-literal URL that is in fact validated or constant — an ID checked against an allow-list in another module, or under a name outside the Allow-list credit set, or a base read from config — still fires, because the body-only walk does not see the validation and does not reason about
 constancy; the rule also cannot weight impact by the service account's actual scope,
 so it treats every dynamic-URL tool on GCP as high-impact. **False negatives:** an
 HTTP client outside the recognized `fetch`/`axios`/`got`/`undici` set
@@ -221,6 +219,18 @@ const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(1
 
 ---
 
+## Allow-list credit
+
+ADK-012, ADK-016 used to fire on every non-literal destination, including tools that had already constrained the host, which made the rule a false-positive source for exactly the code that followed its own fix advice. The match is now `has_dynamic_url_call` **and not** a recognized host allow-list in the tool body. Severity, confidence and scope are unchanged.
+
+**Python (ADK-012).** The rule is silenced when the function body contains a hostname membership test against a named allow-list: `.hostname not in`, `.netloc not in`, or one of `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `allowed_hosts`, `allowed_domains`, `HOST_ALLOWLIST`, `host_allowlist` (predicate `not: has_body_text`). A bare `.hostname in` is deliberately *not* credited, because it cannot tell an allow-list from a deny-list.
+
+**TypeScript (ADK-016).** The rule is silenced when the handler both reads a host (`.hostname` / `.host`) and tests membership (`.includes(` / `.has(`), or references a named allow-list (`allowedHosts`, `allowedDomains`, `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `hostAllowlist`). Reading `new URL(x).hostname` with no membership test does not silence it.
+
+The credit is textual and body-local. It does not verify that the allow-list is correct, that the check runs before the request, or that the request cannot be redirected to a host outside it; HTTPS-only enforcement and a redirect cap are recommended in each rule's fix text but are not separately detected.
+
+---
+
 ## What this policy does not cover
 
 Identical to [claude_sdk/ssrf.md](../claude_sdk/ssrf.md#what-this-policy-does-not-cover):
@@ -234,6 +244,7 @@ outside the recognized `fetch`/`axios`/`got`/`undici` set (`node:http`/`https`
 `new URL(base, modelValue)` before the call, and a model-supplied value passed
 positionally into a helper that performs the fetch all escape the first-argument
 check on a known callee.
+- An allow-list enforced in a helper or middleware outside the tool body, an allow-list check that uses a name outside the recognized set, and a membership test that is unrelated to the URL host but happens to sit beside a `.host` read (TypeScript over-credit). Redirects and non-HTTPS schemes are not detected.
 
 ---
 

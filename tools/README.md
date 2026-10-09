@@ -1,9 +1,11 @@
 # Rulebook tooling
 
-Both tools read the shipped pack from a sibling `trustabl-rules` checkout
+All three tools read the shipped pack from a sibling `trustabl-rules` checkout
 (override with `--rules-repo` or `$TRUSTABL_RULES_REPO`) and share one rule
 loader (`check_rulebook.load_rules`), so they can never disagree about what
-ships. Requires python 3.11+ and pyyaml.
+ships. Requires python 3.9+ and pyyaml — 3.9 because that is the interpreter a
+stock macOS provides, and the tools are deliberately kept runnable on it (see
+the `write_bytes` note in `gen_index.py`). CI pins 3.12.
 
 ## `build_book.py` + `make book` — PDF build
 
@@ -40,11 +42,11 @@ confidence × 100 using the engine's weights (critical 1.0 / high 0.7 /
 medium 0.4 / low 0.15 / info 0.05), one decimal, round-half-up.
 
 ```bash
-python tools/gen_index.py            # write the 4 index files
+python tools/gen_index.py            # write the master index + one per family
 python tools/gen_index.py --check    # CI: exit 1 if regeneration would change anything
 ```
 
-Wire `--check` into CI next to the consistency gate so a rule added to the pack
+`--check` runs in CI next to the consistency gate, so a rule added to the pack
 without regenerating the index fails the build.
 
 ## `check_rulebook.py` — consistency gate
@@ -59,9 +61,16 @@ rules users actually receive, so a polished PDF can never quietly go stale.
 1. **Coverage** — every rule in `agent-reliability-rules` has a rationale doc
    covering it.
 2. **Consistency** — each doc's front-matter `severity` / `confidence` / `scope`
-   matches the rule's YAML.
+   matches the rule's YAML, and so does the per-rule `### RULE-ID — … (Severity:
+   …, Confidence: …)` heading. The book may not claim a severity the engine does
+   not ship, in either the machine-readable copy or the one a reader sees.
 3. **Placement** — a rule is documented in the chapter (`category`/`topic`) where
-   it actually lives, and docs do not reference rules that no longer exist.
+   it actually lives, its `policy_id` matches the paired YAML's `policy.id`, and
+   docs do not reference rules that no longer exist.
+4. **Structure** — every doc carries the sections the template guide requires
+   (`What this policy covers`, `Rule-by-rule defense`, `What this policy does not
+   cover`, `Recommendations beyond the fix`). A doc that stops early tells a
+   reader what is wrong but not what to write instead.
 
 It reads the YAML front-matter required on every `docs/Policy/<category>/<topic>.md`
 (see [`docs/policy-rationale-doc-template-guide.md`](../docs/policy-rationale-doc-template-guide.md)).
@@ -69,7 +78,7 @@ It reads the YAML front-matter required on every `docs/Policy/<category>/<topic>
 ### Usage
 
 ```bash
-# Requires: python 3.11+, pyyaml. A sibling trustabl-rules checkout.
+# Requires: python 3.9+, pyyaml. A sibling trustabl-rules checkout.
 python tools/check_rulebook.py                       # ../trustabl-rules by default
 python tools/check_rulebook.py --rules-repo /path/to/trustabl-rules
 python tools/check_rulebook.py --strict              # docs without front-matter are errors, not warnings
@@ -79,11 +88,11 @@ python tools/check_rulebook.py --strict              # docs without front-matter
 book is consistent with the pack; `1` = at least one error; `2` = the rules repo
 was not found.
 
-### Migration status
+### Front-matter
 
-Docs without front-matter are reported as **warnings** (not errors) so the
-migration can land incrementally. Once every doc carries front-matter, switch CI
-to `--strict` to make missing front-matter a hard failure.
+Every rationale doc carries front-matter, and CI runs the gate with `--strict`,
+so a doc without it is a hard failure. The default (warn, not error) is kept for
+local runs on a work-in-progress doc.
 
 ### CI
 
@@ -93,3 +102,22 @@ assemble smoke test) gates every PR, and a `build-pdf` job renders and uploads t
 PDF artifact. The workflow checks out `agent-reliability-rules` into `.rules` and passes
 `--rules-repo .rules`. If `agent-reliability-rules` is private, set the `RULES_REPO_TOKEN`
 secret to a PAT with read access; for a public pack the default token suffices.
+
+## `check_links.py` — internal-link gate
+
+Resolves every relative markdown link in the repo, and every `#anchor` against
+the target file's real headings (GitHub slug rules). The rationale docs lean on
+cross-references — one doc carries a threat model and its siblings defer to it —
+so a dead link silently removes the half of the argument that was deferred away.
+`check_rulebook.py` cannot see this: it checks docs against the rule pack, not
+against each other.
+
+```bash
+python tools/check_links.py            # whole repo
+python tools/check_links.py --root .   # or an explicit root
+```
+
+Links inside fenced code blocks are skipped, so an illustrative path in the
+template guide is not mistaken for a real one. Exit code `0` = every link
+resolves, `1` = at least one does not. Runs in CI in the `consistency` job; it
+needs no `trustabl-rules` checkout.

@@ -23,6 +23,11 @@ rules:
     confidence: 0.7
     scope: agent
     fix_type: config
+  - id: VAI-020
+    severity: low
+    confidence: 0.5
+    scope: agent
+    fix_type: config
 references: [LLM06, LLM10, LLM01]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM06, LLM10, LLM01]
 
 **Policy ID:** `vercel_ai_agent_safety`  
 **File:** `vercel_ai/agent_safety.yaml`  
-**Rules:** VAI-006, VAI-007, VAI-008, VAI-009  
-**Severities:** high, low, medium, medium  
-**Fix types:** config, config, config, config  
+**Rules:** VAI-006, VAI-007, VAI-008, VAI-009, VAI-020  
+**Severities:** high, low, medium, medium, low  
+**Fix types:** config, config, config, config, config  
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption), LLM01 (Prompt Injection)
 
 ---
@@ -198,6 +203,74 @@ provider-mediated snippets on some providers (narrower injection surface than a
 raw fetch), and agents that genuinely need open web access with output checks in
 place are over-flagged.
 
+### VAI-020 — Agent tool loop has no abortSignal deadline (Severity: low, Confidence: 0.5, Fix type: config)
+
+**What we detect:**
+A `generateText` / `streamText` call (`agent_class: [GenerateText, StreamText]`)
+that runs a bounded tool loop (`agent_kwarg_present: [stopWhen, maxSteps]`) but
+passes no `abortSignal` (`agent_kwarg_missing`). `ToolLoopAgent` is excluded: its
+signal is supplied on `.generate()` / `.stream()`, not on the constructor, so a
+constructor-level check would flag every correctly-cancelled agent.
+
+**Why it is flaggable:**
+The step bound (VAI-007) limits how many round-trips happen, not how long they take.
+One step that waits on a slow tool or a stalled provider response holds the request
+open with no deadline, and a client that disconnects cannot cancel the work, so the
+loop keeps its tools live and keeps spending tokens (LLM10, Unbounded Consumption).
+
+**Real-world consequence:**
+A route handler runs a five-step tool loop; a tool step stalls on an upstream API,
+the user closes the tab, and with no signal forwarded the serverless invocation runs
+to the platform's hard limit, billed the whole time.
+
+**Why severity is low and not medium:**
+Availability and cost only, bounded by the platform's own invocation limit, and
+nothing new is granted to the model. Same tier as VAI-007.
+
+**Fix type — config:**
+One option on the call.
+
+**Confidence 0.5:**
+The lowest in the file, on purpose. **False positives:** a deadline enforced
+outside the call (a platform timeout, `Promise.race`, a wrapper that aborts on the
+caller's behalf) is invisible; `abortSignal` passed through a spread is not read;
+`stopWhen` and `maxSteps` are only a proxy for "this call loops", so a call whose
+tools never run long is flagged for something with little wall-clock risk.
+**False negatives:** the check is presence-only, so a signal that never aborts
+satisfies it; `ToolLoopAgent` and calls with no explicit loop bound are silent.
+
+---
+
+### VAI-020 — Tool loop has no abortSignal or timeout deadline (Severity: low, Confidence: 0.5, Fix type: config)
+
+**What we detect:** a `generateText` / `streamText` call that runs a multi-step
+tool loop (it sets `stopWhen` or `maxSteps`) and passes none of `abortSignal` or
+`timeout` (predicates `agent_class`, `agent_kwarg_present`, and two
+`agent_kwarg_missing`). `timeout` is the SDK's native time budget — a millisecond
+number or an object (`totalMs`, `stepMs`, ...) — and is credited the same as an
+`abortSignal`. A `ToolLoopAgent` is excluded: its signal is passed to
+`.generate()`, not the constructor.
+
+**Why it is flaggable:** the step bound limits how many round-trips happen, not
+how long they take. One step waiting on a slow tool or a stalled provider holds
+the request open with no deadline, and a disconnected caller cannot cancel it.
+Both `abortSignal` and `timeout` are explicit, checkable deadline hooks on the
+call itself; no Promise.race-style wrapper is needed or recognized.
+
+**Real-world consequence:** a stuck loop keeps its tools live and keeps spending
+tokens until the provider or runtime gives up — on serverless, until the platform
+kills the invocation, after billing for it.
+
+**Why low and not medium:** an availability and cost amplifier, bounded by the
+step count and often by a platform-level function timeout outside this code.
+
+**Fix type — config:** pass `timeout` or `abortSignal` in the call options.
+
+**Confidence 0.5:** a signal forwarded from an enclosing scope via a spread
+(`...options`) is not captured; a deadline set by the platform is invisible; and a
+`timeout` or `abortSignal` whose value is never meaningful (`undefined`, an
+already-aborted signal) is not distinguished from a real one.
+
 ---
 
 ## What this policy does not cover
@@ -221,6 +294,10 @@ place are over-flagged.
   `AbortController`, a custom step handler) are invisible to VAI-007.
 - Whether a provider tool's sandbox is actually isolated — VAI-006/008 flag the
   wiring regardless of the provider's execution environment.
+- For VAI-020: deadlines enforced outside the call (platform timeouts,
+  `Promise.race`, a wrapping helper), a signal passed via a spread, and
+  `ToolLoopAgent` (the signal goes on `.generate()`, which the constructor-level
+  read cannot see).
 
 ---
 
