@@ -8,17 +8,22 @@ rules:
     confidence: 0.8
     scope: repo
     fix_type: config
-references: [LLM02]
+  - id: OAI-203
+    severity: low
+    confidence: 0.75
+    scope: repo
+    fix_type: config
+references: [LLM02, LLM10]
 ---
 
 # Policy Rationale: Tracing Configuration
 
 **Policy ID:** `openai_sdk_tracing`  
 **File:** `openai_sdk/tracing.yaml`  
-**Rules:** OAI-201  
-**Severities:** medium  
-**Fix types:** config  
-**References:** LLM02
+**Rules:** OAI-201, OAI-203  
+**Severities:** medium, low  
+**Fix types:** config, config  
+**References:** LLM02 (Sensitive Information Disclosure), LLM10 (Unbounded Consumption)
 
 ---
 
@@ -82,9 +87,76 @@ trace processor that redacts sensitive fields before export.
 informational rather than a defect — and the rare case where tracing is disabled by
 a mechanism the scanner does not recognize.
 
+### OAI-203 — OpenAI Agents SDK project wires no observability (Severity: low, Confidence: 0.75, Fix type: config)
+
+**What we detect:**  
+The repo uses the OpenAI Agents SDK in code (`repo_has_sdk_in_code:
+[openai_agents]`), the scanner found no observability signal of any kind
+(`repo_has_observability: false`), and the repo contains at least one language
+the observability pass actually parses (`repo_observability_inspectable: true`),
+and no observability package is declared in a hand-edited dependency manifest
+(`repo_observability_declared: false`) — a repo that ships a tracing dependency
+it never wired draws OBS-005 at medium instead, since it has claimed coverage it
+does not have.
+No OpenTelemetry provider, and no Langfuse, Logfire, Phoenix, Braintrust, Weave,
+OpenLLMetry, MLflow, or AgentOps import or initialization appears anywhere in
+the parsed source.
+
+**Why it is flaggable:**  
+An OpenAI Agents SDK run is a loop: the model selects a tool, the SDK executes
+it, the result re-enters the context, and the loop repeats until a stop
+condition. Which branch ran is decided at runtime by the model, so the source
+does not record it. Without a trace there is no record of the tool sequence, the
+arguments the model synthesized, whether a guardrail tripped, or how many turns
+were consumed — and re-running the same input does not reproduce the run.
+
+**Real-world consequence:**  
+- An agent starts issuing the same search tool call repeatedly against a paid
+  API. The bill is the first signal, and there is no per-run record showing
+  which input triggers the loop.
+- A guardrail rejects an input in production. The user reports "it just said it
+  couldn't help"; with no trace, there is no way to tell a guardrail trip from a
+  model refusal from a tool error.
+
+**Why severity is low and not medium:**  
+Missing observability degrades the ability to diagnose failures; it does not
+itself cause incorrect behavior or expose data. Repos legitimately ship without
+it — examples, tutorials, internal libraries, and prototypes — and at medium
+this rule would exit 1 and fail CI on all of them. Low keeps it visible and
+scored without turning "no tracing" into a build break. Contrast OBS-001, which
+is medium because it describes instrumentation that is present and provably
+broken.
+
+**Fix type — config:**  
+The SDK traces natively; the fix registers a processor or installs a provider at
+startup. No tool or agent logic changes.
+
+**Confidence 0.75:**  
+The 0.25 gap is detection reach, not judgement. False positives: instrumentation
+configured entirely through environment variables or an auto-instrumentation
+agent with no call site in the repo; a provider initialized in a deployment
+wrapper outside the scanned tree; a vendor SDK not in the detection table. False
+negatives are structurally excluded here — the rule only fires when *zero*
+signals were found, and the `repo_observability_inspectable` gate suppresses it
+in languages the pass does not read, so "we did not look" is never reported as
+"you have none".
+
 ---
 
 ## What this policy does not cover
+
+OAI-203 specifically does not cover:
+
+- **Declarative instrumentation.** `opentelemetry-instrument`, `OTEL_*`
+  environment configuration, a collector sidecar, or a platform-injected agent
+  leaves no call site, so a fully instrumented deployment can still fire this
+  rule.
+- **Languages the pass does not parse.** Phase 1 reads Python and
+  TypeScript/JavaScript; the inspectable gate keeps the rule silent elsewhere
+  rather than guessing.
+- **Whether the wiring works.** A repo that has instrumentation silences this
+  rule even if it is never initialized (OBS-001) or exports only to the console
+  (OBS-002).
 
 - Whether the traced data is actually sensitive — the rule cannot classify the
   content, only detect that default export is active.
