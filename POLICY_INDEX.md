@@ -4,8 +4,10 @@
 All shipped rules across every SDK. ID prefix denotes the rule family:
 `CSDK-` Claude Agent SDK, `OAI-` OpenAI Agents SDK, `ADK-` Google ADK,
 `MCP-` Model Context Protocol, `LC-` LangChain / LangGraph, `CREW-` CrewAI,
-`AG2-` AutoGen / AG2, `VAI-` Vercel AI SDK, `PYD-` Pydantic AI. Within a
-family: `NNN` tool-scope, `1NN` agent / subagent scope, `2NN` repo scope.
+`AG2-` AutoGen / AG2, `VAI-` Vercel AI SDK, `PYD-` Pydantic AI,
+`CSKILL-` Claude Skills. Within a family: `NNN` tool-scope, `1NN` agent /
+subagent scope, `2NN` repo scope. `CSKILL-` rules are all skill-scope, so
+their numbers group by topic instead.
 
 Risk score = `severity_weight × confidence × 100` (engine formula; weights: low=0.15, medium=0.40, high=0.70). Higher = worse.
 
