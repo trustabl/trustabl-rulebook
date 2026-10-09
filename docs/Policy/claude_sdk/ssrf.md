@@ -13,17 +13,27 @@ rules:
     confidence: 0.6
     scope: tool
     fix_type: code
-references: [LLM06, LLM02]
+  - id: CSDK-024
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+  - id: CSDK-025
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+references: [LLM06, LLM02, LLM01]
 ---
 
 # Policy Rationale: Server-Side Request Forgery
 
 **Policy ID:** `claude_sdk_ssrf`  
 **File:** `claude_sdk/ssrf.yaml`  
-**Rules:** CSDK-009, CSDK-013  
-**Severities:** high, high  
-**Fix types:** code, code  
-**References:** LLM06, LLM02
+**Rules:** CSDK-009, CSDK-013, CSDK-024, CSDK-025  
+**Severities:** high, high, medium, medium  
+**Fix types:** code, code, code, code  
+**References:** LLM06, LLM02, LLM01
 
 > This is the canonical SSRF rationale for the rulebook. The OpenAI (OAI-018) and
 > Google ADK (ADK-012) SSRF rules cross-reference this document for the shared
@@ -170,6 +180,72 @@ negatives that are TS-specific: an HTTP client not in the recognized callee set
 object rather than the first positional argument (`axios({ url })`,
 `fetch(req)` where `req` is a `Request`), or a URL assembled in a helper, all
 evade the first-argument check.
+
+### CSDK-024 — Claude SDK tool fetches an allow-listed host without pinning https:// (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a Python tool whose body checks the destination host against a named allow-list (the same `has_body_text` credit that silences CSDK-009) and makes a recognized HTTP call (`requests`/`httpx`/`urllib`/aliased clients) with a dynamic URL that neither starts with a literal `https://` prefix nor is guarded by a scheme check (`.scheme ==`/`!=`/`in`/`not in`, `startswith("https://")`). Backed by `has_unpinned_scheme_url_call`, which treats an f-string, `+` concatenation, `%`-format, or `.format()` call whose leftmost literal starts with `https://` as pinned.
+
+**Why it is flaggable:** the allow-list (CSDK-009's credit) constrains *where* the request goes, not *how*. An `http://` URL for an allowed
+host passes the host check, so request headers (API keys, bearer tokens) and bodies travel in cleartext, and a network-path attacker can read
+them or rewrite the response. The response re-enters the model's context as trusted tool output, which makes tampering a prompt-injection channel.
+A redirect from the allowed host to `http://` has the same effect.
+
+**Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
+and integrity loss of the content the model reasons over.
+
+**Why medium / 0.6:** medium rather than CSDK-009's high because the host is already bounded, so the residual risk needs a network-path attacker
+rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
+another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+
+**Staging:** the rule requires the allow-list credit to be present, so CSDK-009 and CSDK-024 never fire on the same tool: SSRF first, then HTTPS once a host
+allow-list exists.
+
+**What this does not cover:** a fully literal `http://` URL (not dynamic, so outside the SSRF family); scheme validation in another function
+or file; HTTPS downgrade via a redirect chain the rule cannot trace; and HSTS or transport policy configured outside the tool body.
+
+**Safe-code recommendation:**
+
+```python
+ALLOWED_HOSTS = {"api.example.com"}
+
+def fetch(path: str) -> str:
+    url = f"https://api.example.com/{quote(path)}"   # scheme is a literal
+    if urlparse(url).hostname not in ALLOWED_HOSTS:
+        raise ValueError("host not allowed")
+    return requests.get(url, timeout=10, allow_redirects=False).text
+```
+
+### CSDK-025 — TypeScript Claude SDK tool fetches an allow-listed host without pinning https:// (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a TypeScript tool whose body checks `.hostname`/`.host` against an allow-list (the positive form of the credit that silences CSDK-013) and calls `fetch`/`axios`/`got`/`undici` with a dynamic URL that neither starts with a literal `https://` prefix nor is guarded by a `.protocol` comparison or `startsWith("https:")`. Backed by the `url_scheme_unpinned` handler fact computed beside `dynamic_url`; a template string or `+` concatenation whose leftmost fragment is a literal `https://` is treated as pinned.
+
+**Why it is flaggable:** the allow-list (CSDK-013's credit) constrains *where* the request goes, not *how*. An `http://` URL for an allowed
+host passes the host check, so request headers (API keys, bearer tokens) and bodies travel in cleartext, and a network-path attacker can read
+them or rewrite the response. The response re-enters the model's context as trusted tool output, which makes tampering a prompt-injection channel.
+A redirect from the allowed host to `http://` has the same effect.
+
+**Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
+and integrity loss of the content the model reasons over.
+
+**Why medium / 0.6:** medium rather than CSDK-013's high because the host is already bounded, so the residual risk needs a network-path attacker
+rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
+another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+
+**Staging:** the rule requires the allow-list credit to be present, so CSDK-013 and CSDK-025 never fire on the same tool: SSRF first, then HTTPS once a host
+allow-list exists.
+
+**What this does not cover:** a fully literal `http://` URL (not dynamic, so outside the SSRF family); scheme validation in another function
+or file; HTTPS downgrade via a redirect chain the rule cannot trace; and HSTS or transport policy configured outside the tool body.
+
+**Safe-code recommendation:**
+
+```ts
+const ALLOWED = new Set(["api.example.com"]);
+
+const url = new URL(`https://api.example.com/${encodeURIComponent(path)}`); // scheme is a literal
+if (!ALLOWED.has(url.hostname)) throw new Error("host not allowed");
+const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+```
 
 ---
 
