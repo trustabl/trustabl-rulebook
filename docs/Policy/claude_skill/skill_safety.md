@@ -170,7 +170,7 @@ beneath every security-focused rule in this pack, including CSKILL-040's
 
 ## Rule-by-rule defense
 
-### CSKILL-001 — Skill auto-approves unrestricted shell (high, 0.9, config)
+### CSKILL-001 — Skill auto-approves unrestricted shell (Severity: high, Confidence: 0.9, Fix type: config)
 
 **What we detect:** `allowed-tools` grants unrestricted shell — a bare `Bash`
 token or a wildcard `Bash(*)` / `Bash(:*)` (`skill_allows_unrestricted_shell`).
@@ -211,7 +211,7 @@ genuinely needs broad shell (a build runner), which should still scope its
 grants — and workflow ecosystems where bare `Bash` is the norm, where the
 finding is real but reads as noise at volume.
 
-### CSKILL-002 — Skill runs shell during load, dynamic-context execution (high, 0.9, config)
+### CSKILL-002 — Skill runs shell during load, dynamic-context execution (Severity: high, Confidence: 0.9, Fix type: config)
 
 **What we detect:** The body contains dynamic-context execution — inline
 `` !`cmd` `` or a ` ```! ` block (`skill_body_has_dynamic_exec`).
@@ -227,7 +227,7 @@ two are indistinguishable to the model because neither reaches it as a tool call
 risk signal but not proof of harm (read-only uses exist) — CSKILL-003 escalates
 the egress/secret case to critical. Confidence 0.9: the grammar match is precise.
 
-### CSKILL-003 — Dynamic-context command performs network egress or reads secrets (critical, 0.85, config)
+### CSKILL-003 — Dynamic-context command performs network egress or reads secrets (Severity: critical, Confidence: 0.85, Fix type: config)
 
 **What we detect:** A dynamic-context command matches network egress
 (`curl`/`wget`/`nc`/…) or credential/secret access (`gh auth`, `$AWS_*`,
@@ -245,7 +245,7 @@ mechanism designed to be invisible to the model. Confidence 0.85 (below 001):
 the egress/secret heuristic can match a legitimate read-only command, so a
 small false-positive margin is priced in.
 
-### CSKILL-010 — Bundled skill script performs network egress (high, 0.7, code)
+### CSKILL-010 — Bundled skill script performs network egress (Severity: high, Confidence: 0.7, Fix type: code)
 
 **What we detect:** A script bundled in the skill's directory (a `.sh`/`.py`/…
 file the skill can run via Bash) makes outbound network calls — `curl`/`wget`/
@@ -265,7 +265,7 @@ into a shell, executed with the user's privileges the moment the skill runs.
 not proof of harm (a script may legitimately fetch a pinned dependency), so it is
 high rather than critical, with a confidence that prices in benign installers.
 
-### CSKILL-011 — Bundled skill script reads credentials or secrets (critical, 0.8, code)
+### CSKILL-011 — Bundled skill script reads credentials or secrets (Severity: critical, Confidence: 0.8, Fix type: code)
 
 **What we detect:** A bundled script reads credentials or secrets — `gh auth`,
 `$AWS_*`, `~/.aws`, `~/.ssh`, `id_rsa`, `*_key`, … — detected by reading the
@@ -285,7 +285,7 @@ activation and hidden from review. Confidence 0.8: the secret-read heuristic can
 match a legitimate credential-management script, so a small false-positive margin
 is priced in below the auto-shell rules.
 
-### CSKILL-030 — Bundled skill file contains a hardcoded secret (high, 0.85, code)
+### CSKILL-030 — Bundled skill file contains a hardcoded secret (Severity: high, Confidence: 0.85, Fix type: code)
 
 **What we detect:** A non-binary bundled file contains a hardcoded secret literal
 — a recognizable provider token (AWS `AKIA…`, GitHub `ghp_…` / `github_pat_…`,
@@ -310,7 +310,7 @@ confidence sits above the heuristic rules. Format/context over entropy keeps
 false positives near zero; the trade-off is missing custom or high-entropy
 secrets with no recognizable prefix.
 
-### CSKILL-020 — Skill fetches untrusted external content (medium, 0.7, config)
+### CSKILL-020 — Skill fetches untrusted external content (Severity: medium, Confidence: 0.7, Fix type: config)
 
 **What we detect:** The body references an external `http(s)` URL
 (`skill_references_external_url`).
@@ -323,7 +323,7 @@ can also change after review.
 presence alone is a review prompt, not a verdict — hence medium and a confidence
 that admits frequent benign matches.
 
-### CSKILL-040 — Skill body contains prompt-injection markers (medium, 0.6, config)
+### CSKILL-040 — Skill body contains prompt-injection markers (Severity: medium, Confidence: 0.6, Fix type: config)
 
 **What we detect:** Instruction-override phrasing ("ignore previous
 instructions"), invisible Unicode used to smuggle hidden text (zero-width
@@ -340,7 +340,7 @@ place in skill prose.
 FP-prone (a base64 data sample, a doc *about* prompt injection) — the lowest
 confidence in the pack, shipped as a review nudge, not an assertion.
 
-### CSKILL-050 — Model-invocable skill grants side-effecting tools (high, 0.8, config)
+### CSKILL-050 — Model-invocable skill grants side-effecting tools (Severity: high, Confidence: 0.8, Fix type: config)
 
 **What we detect:** The skill is model-invocable (no `disable-model-invocation`)
 **and** pre-approves a side-effecting tool — `Bash`/`Write`/`Edit`/`WebFetch`/
@@ -354,7 +354,7 @@ tools then act without the user choosing to (LLM06).
 specific; the residual gap is a skill that legitimately wants model invocation
 *and* a write tool (rare for a safe design).
 
-### CSKILL-060 — Skill description claims read-only but grants side-effecting tools (medium, 0.5, config)
+### CSKILL-060 — Skill description claims read-only but grants side-effecting tools (Severity: medium, Confidence: 0.5, Fix type: config)
 
 **What we detect:** The description explicitly claims to be read-only or
 side-effect-free (e.g. "read-only", "does not modify", "cannot run commands")
@@ -373,7 +373,7 @@ benign-sounding description — but the read-only-claim regex is a heuristic tha
 can match incidental phrasing, so it ships at the pack's lowest confidence as a
 review nudge. The broader "implicitly read-only-sounding" case is out of scope.
 
-### CSKILL-070 — Skill is missing a description (low, 0.9, config)
+### CSKILL-070 — Skill is missing a description (Severity: low, Confidence: 0.9, Fix type: config)
 
 **What we detect:** The skill's `description` frontmatter field is absent or
 blank after trimming whitespace (`skill_has_description: false`).
@@ -403,7 +403,7 @@ priced in is one of scope, not accuracy: CSKILL-070 does not evaluate whether a
 *present* description is any good (see "What this policy does not cover"
 below).
 
-### CSKILL-061 — Skill allowed-tools list has duplicate tool references (low, 0.7, config)
+### CSKILL-061 — Skill allowed-tools list has duplicate tool references (Severity: low, Confidence: 0.7, Fix type: config)
 
 **What we detect:** The same normalized token appears more than once in
 `allowed-tools` — case-insensitive, whitespace-trimmed exact match
@@ -440,7 +440,7 @@ copy-paste repeats reliably; it does not reason about which grants overlap in
 effect, so confidence sits at 0.7 to reflect that narrower, syntactic scope
 rather than any risk of misfiring on the cases it does catch.
 
-### CSKILL-071 — Skill is bound to a single agent, reducing portability (low, 0.6, config)
+### CSKILL-071 — Skill is bound to a single agent, reducing portability (Severity: low, Confidence: 0.6, Fix type: config)
 
 **What we detect:** The skill's `agent:` frontmatter field is set to a non-empty
 value (`skill_is_agent_specific: true`).

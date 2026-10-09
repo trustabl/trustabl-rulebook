@@ -8,28 +8,39 @@
 # default; tectonic is the easiest to install for CI — override with
 # `make book PDF_ENGINE=tectonic`).
 
-RULES_REPO ?= ../trustabl-rules
+# $TRUSTABL_RULES_REPO is the documented way to point the tools at a pack that
+# is not a sibling checkout. Make passes --rules-repo explicitly, so without
+# this the variable is silently ignored for every target.
+RULES_REPO ?= $(or $(TRUSTABL_RULES_REPO),../trustabl-rules)
 PDF_ENGINE ?= xelatex
+# `python` is not a thing on a stock macOS (and need not exist anywhere);
+# the tools are python3. Override if your interpreter lives elsewhere.
+PYTHON     ?= python3
 BUILD_DIR  := build
 BOOK_MD    := $(BUILD_DIR)/trustabl-rulebook.md
 BOOK_PDF   := $(BUILD_DIR)/trustabl-rulebook.pdf
 
-.PHONY: book check index assemble pdf clean
+.PHONY: book check links index assemble pdf clean
 
-# Full pipeline: gate -> index -> assemble -> render.
-book: check index assemble pdf
+# Full pipeline: gates -> index -> assemble -> render.
+book: check links index assemble pdf
 
 # Fail if the rationale docs drift from the shipped pack.
 check:
-	python tools/check_rulebook.py --rules-repo $(RULES_REPO)
+	$(PYTHON) tools/check_rulebook.py --rules-repo $(RULES_REPO)
+
+# Fail if a relative link or #anchor between docs does not resolve. Needs no
+# rules checkout — this one is about the rulebook's internal wiring.
+links:
+	$(PYTHON) tools/check_links.py
 
 # Regenerate the POLICY_INDEX files (and fail if they were stale in CI: add --check).
 index:
-	python tools/gen_index.py --rules-repo $(RULES_REPO)
+	$(PYTHON) tools/gen_index.py --rules-repo $(RULES_REPO)
 
 # Assemble all chapters + appendix into one markdown.
 assemble:
-	python tools/build_book.py --rules-repo $(RULES_REPO) --out $(BOOK_MD)
+	$(PYTHON) tools/build_book.py --rules-repo $(RULES_REPO) --out $(BOOK_MD)
 
 # Render the PDF (requires pandoc + a LaTeX engine).
 pdf: $(BOOK_MD)

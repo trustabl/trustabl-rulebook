@@ -1,14 +1,19 @@
 name: rulebook
 
 # Keeps the rulebook from drifting from the shipped rule pack and builds the PDF.
-# The gates clone trustabl-rules alongside this repo and validate the docs +
-# index against it. If trustabl-rules is PRIVATE, set the RULES_REPO_TOKEN secret
+# The gates clone agent-reliability-rules alongside this repo and validate the docs +
+# index against it. If agent-reliability-rules is PRIVATE, set the RULES_REPO_TOKEN secret
 # to a PAT with read access; for a public pack the default token is enough.
 
 on:
   pull_request:
   push:
     branches: [main]
+  # The PDF is this repo's product and is built only as a CI artifact, so
+  # without this there is no way to produce one without pushing a commit —
+  # including after a trustabl-rules change that the rulebook itself does not
+  # reflect in a diff.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,28 +31,28 @@ jobs:
         uses: actions/checkout@v4
 
       # A coordinated rules change ships as paired PRs (one here, one in
-      # trustabl-rules). Validate this PR's docs against the matching production
-      # PR before either merges: check out trustabl-rules at a branch of the SAME
+      # agent-reliability-rules). Validate this PR's docs against the matching production
+      # PR before either merges: check out agent-reliability-rules at a branch of the SAME
       # name as this PR's head branch when it exists; otherwise fall back to main
       # (push to main has an empty head_ref, so main always validates against the
       # real production pack).
-      - name: Resolve trustabl-rules ref
+      - name: Resolve agent-reliability-rules ref
         id: rulesref
         env:
           RULES_TOKEN: ${{ secrets.RULES_REPO_TOKEN || github.token }}
         run: |
           ref="${{ github.head_ref }}"
           if [ -n "$ref" ] && git ls-remote --exit-code --heads \
-              "https://x-access-token:${RULES_TOKEN}@github.com/trustabl/trustabl-rules.git" "$ref" >/dev/null 2>&1; then
+              "https://x-access-token:${RULES_TOKEN}@github.com/trustabl/agent-reliability-rules.git" "$ref" >/dev/null 2>&1; then
             echo "ref=$ref" >> "$GITHUB_OUTPUT"
           else
             echo "ref=main" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout trustabl-rules
+      - name: Checkout agent-reliability-rules
         uses: actions/checkout@v4
         with:
-          repository: trustabl/trustabl-rules
+          repository: trustabl/agent-reliability-rules
           ref: ${{ steps.rulesref.outputs.ref }}
           path: .rules
           token: ${{ secrets.RULES_REPO_TOKEN || github.token }}
@@ -62,6 +67,11 @@ jobs:
       # matches the pack. --strict also fails on any doc missing front-matter.
       - name: Consistency gate
         run: python tools/check_rulebook.py --rules-repo .rules --strict
+
+      # Every relative link and #anchor between docs resolves. Needs no rules
+      # checkout: this one is purely about the rulebook's internal wiring.
+      - name: Internal links resolve
+        run: python tools/check_links.py
 
       # The committed POLICY_INDEX files match what the generator would produce.
       - name: Index is up to date
@@ -80,28 +90,28 @@ jobs:
         uses: actions/checkout@v4
 
       # A coordinated rules change ships as paired PRs (one here, one in
-      # trustabl-rules). Validate this PR's docs against the matching production
-      # PR before either merges: check out trustabl-rules at a branch of the SAME
+      # agent-reliability-rules). Validate this PR's docs against the matching production
+      # PR before either merges: check out agent-reliability-rules at a branch of the SAME
       # name as this PR's head branch when it exists; otherwise fall back to main
       # (push to main has an empty head_ref, so main always validates against the
       # real production pack).
-      - name: Resolve trustabl-rules ref
+      - name: Resolve agent-reliability-rules ref
         id: rulesref
         env:
           RULES_TOKEN: ${{ secrets.RULES_REPO_TOKEN || github.token }}
         run: |
           ref="${{ github.head_ref }}"
           if [ -n "$ref" ] && git ls-remote --exit-code --heads \
-              "https://x-access-token:${RULES_TOKEN}@github.com/trustabl/trustabl-rules.git" "$ref" >/dev/null 2>&1; then
+              "https://x-access-token:${RULES_TOKEN}@github.com/trustabl/agent-reliability-rules.git" "$ref" >/dev/null 2>&1; then
             echo "ref=$ref" >> "$GITHUB_OUTPUT"
           else
             echo "ref=main" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout trustabl-rules
+      - name: Checkout agent-reliability-rules
         uses: actions/checkout@v4
         with:
-          repository: trustabl/trustabl-rules
+          repository: trustabl/agent-reliability-rules
           ref: ${{ steps.rulesref.outputs.ref }}
           path: .rules
           token: ${{ secrets.RULES_REPO_TOKEN || github.token }}

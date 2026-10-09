@@ -28,6 +28,21 @@ rules:
     confidence: 0.6
     scope: runtime
     fix_type: config
+  - id: RT-006
+    severity: high
+    confidence: 0.9
+    scope: runtime
+    fix_type: config
+  - id: RT-007
+    severity: high
+    confidence: 0.9
+    scope: runtime
+    fix_type: config
+  - id: RT-008
+    severity: critical
+    confidence: 0.9
+    scope: runtime
+    fix_type: config
 references: [LLM06, LLM08]
 ---
 
@@ -35,9 +50,9 @@ references: [LLM06, LLM08]
 
 **Policy ID:** `runtime_conformance`  
 **File:** `runtime/conformance.yaml`  
-**Rules:** RT-001, RT-002, RT-003, RT-004, RT-005  
-**Severities:** high, medium, high, low, low  
-**Fix types:** config, config, config, code, config  
+**Rules:** RT-001, RT-002, RT-003, RT-004, RT-005, RT-006, RT-007, RT-008  
+**Severities:** high, medium, high, low, low, high, high, critical  
+**Fix types:** config, config, config, code, config, config, config, config  
 **References:** LLM06 (Excessive Agency), LLM08 (Vector and Embedding Weaknesses — applied here as trust-in-joins: an inferred join treated as exact)
 
 ---
@@ -168,6 +183,160 @@ before concluding anything. This is review input, not an alarm.
 **What this does not cover.** Which constraint (the finding counts; the
 summary's hit list names them), and windows are per-summary — no
 cross-window accumulation yet.
+
+### RT-006: Action observed under an identity the contract is not bound to (high, 0.9)
+
+**What we detect.** A bound action whose bind status is `binding_mismatch`
+(`action_status_is: binding_mismatch`): the contract was resolved by its
+span-carried hash and carries an identity binding (`trustabl contract bind`
+fused it to one canonical principal and one declared workload), and the
+span's identity keys (`trustabl.principal.id`, `trustabl.workload.id`,
+`trustabl.binding.id`) disagree with that binding. The runtime compares only
+after a key-resolved join; a span with no identity keys is recorded as an
+unverified binding, not as a mismatch, and a contract nobody bound has
+nothing to compare against.
+
+**Why it is flaggable.** The contract's ceilings were compiled for a named
+principal: the DSPM data scope is that person's working set, the tool
+allow-list and hosts were narrowed for that deployment. Run under another
+identity, every one of those ceilings is applied to somebody the compiler
+never considered. That is the identity-fusion failure the sandbox binds
+against at creation time, and OpenShell cannot see it from inside the jail
+because its policy schema has no principal field; the pre-bind check and this
+rule are what make the binding enforceable end to end. LLM06 in its exact
+form: agency exercised under an identity that was never granted it.
+
+**Consequence.** An agent inherits a person's dormant entitlements under a
+contract compiled to prevent exactly that, or a contract bound to a test
+sandbox governs a production one. Either way the contract's evidence chain
+(constraint addresses, signed summaries) is describing the wrong principal.
+
+**Severity/confidence defense.** High/0.9: the comparison is exact, on
+canonical ids the bind step validated, after a hash-resolved join, so a
+mismatch is a measured disagreement between two stated identities rather
+than an inference. Not critical, because the runtime observes and escalates
+and does not block; the enforcement statement governs.
+
+**What this does not cover.** Name-matched actions (no key, no resolved
+binding, already reported as `name_match`); the live `watch` path until it
+accepts the index and store; a workload that stamps the correct keys while
+running as someone else, which is a credential problem the binding cannot see.
+The last gap is what the subject ticket (RT-007, RT-008) closes: the keys are
+claims the workload makes about itself, the ticket is the issuer's signature
+over the same facts.
+
+---
+
+### RT-007: Required subject ticket not presented (high, 0.9)
+
+**What we detect.** A bound action whose bind status is `ticket_missing`
+(`action_status_is: ticket_missing`): the contract the action resolved to
+carries an identity binding with `ticket_required` (`trustabl contract bind
+--require-ticket`, folded into the binding digest), and the span carried no
+`trustabl.ticket.id`. The runtime checks the requirement on every action that
+resolves to that binding, whether the contract was joined by hash, by name or
+after a hash miss, and whether or not any ticket flag was given: a deployment
+that drops its binding line does not escape the requirement by that omission.
+The summary counts the failure from the failure the binder recorded, not from
+the status, so an action whose off-contract deny stood is still named in
+`ticket_failures`, citing the binding constraint the ticket failed (the
+action's own verdict keeps citing the allow-list), and the guard carries it as
+its own action with that deny and the runtime's join method. This rule matches
+on the status alone, so it fires for that action too, beside RT-001.
+
+**Why it is flaggable.** The binding's span keys (`trustabl.principal.id`,
+`trustabl.workload.id`, `trustabl.binding.id`) are claims a workload stamps on
+itself. The subject ticket is the issuer's signature over the same facts, one
+principal, one binding, one workload and one contract version, with an issue
+time and an expiry, verified offline with the evidence public key. A contract
+that requires the ticket has said that the keys alone are not enough. An
+action with no ticket is therefore an action nobody vouched for: the runtime
+cannot tell a deployment that forgot the stamp from one that was never issued
+a ticket, and it fails closed on both. LLM06: agency exercised under an
+identity that was asserted, never proven.
+
+**Consequence.** Every ceiling compiled for the bound principal (the data
+scope above all) is applied to a workload whose identity fusion was never
+signed off. In practice this is a misconfigured deployment: the ticket was
+never issued, or the stamp line was dropped when the workload was rolled.
+Either way the evidence chain has a hole at the identity step.
+
+**Severity/confidence defense.** High/0.9: the check is a presence test on a
+key the binding demanded, after the contract was resolved, so a missing
+ticket is a measured absence rather than an inference; 0.9 rather than 1.0
+because a workload that stamps the ticket on a different resource attribute,
+or a collector that drops it, reads the same. Not critical: the runtime
+observes and escalates, it does not block, and a missing ticket is far more
+often a rollout mistake than an attack, which is what makes RT-008 the
+critical one.
+
+**What this does not cover.** A ticket that was presented and failed (RT-008);
+the live `watch` path, which binds by name and cannot verify a ticket until
+it accepts the index and store; a contract whose binding does not require a
+ticket, where the keys stand alone and RT-006 is the identity rule.
+
+---
+
+### RT-008: Action ran under an invalid subject ticket (critical, 0.9)
+
+**What we detect.** A bound action whose bind status is `ticket_invalid`
+(`action_status_is: ticket_invalid`): a `trustabl.ticket.id` was presented
+and the ticket failed a check. The runtime runs the engine's checks in order
+and names the first that failed: `unknown_id` (not in the ticket store),
+`bad_signature` or `demo_signed` (not from this site's issuer, or signed with
+the deterministic demo key on an enforcement path), `policyhash_mismatch` and
+`binding_mismatch` (fused to another contract version, principal, binding or
+workload), `not_yet_valid` and `expired` (judged at the span's end time, or
+`--now` for spans that carry none), `revoked` (by the operator, or by the
+directory change feed that `contract directory sync` diffs from the Console's
+directory snapshots), `store_unreadable` (a ticket store or revocation list
+the runtime could not read) and `malformed` (a span end time or a stamp that
+is not a ticket id). As with RT-007 the failure is recorded beside a stronger
+verdict rather than replacing it, and this rule fires for that action too.
+
+**Why it is flaggable.** A ticket that verifies says the issuer fused this
+principal, this workload and this contract version at a known time and has
+not withdrawn it. Every failure reason denies one clause of that sentence. An
+expired or revoked ticket means the fusion is no longer vouched for, which is
+the whole mechanism by which a deactivated user or a changed group stops an
+agent within one TTL without any call to the IdP on the request path. A
+policyhash or binding mismatch means the workload presents proof for a
+different deployment. A bad signature means the proof did not come from the
+issuer at all. LLM06 again, and the difference from RT-007 is that here the
+workload presented evidence that is wrong, not none.
+
+**Consequence.** An agent keeps running under a principal the directory has
+deactivated, or under a contract version that was promoted away, or with a
+forged ticket, and every ceiling compiled for the bound principal is applied
+to an identity the issuer does not stand behind. Where RT-007 is usually a
+rollout mistake, an invalid ticket is either a stale deployment that must be
+re-issued or a live incident.
+
+**Severity/confidence defense.** Critical/0.9: the ticket is verified offline
+against the evidence public key, the resolved contract's policyhash, the
+binding and an append-only revocation list, so a failure is a measured
+disagreement with signed facts, and a revoked or forged ticket is exactly the
+condition the ticket exists to catch. 0.9 rather than 1.0 because some of the
+reasons describe the verifier's own situation rather than the workload's: a
+store the runtime cannot read fails closed by design and is fixed on the
+runtime host, a mangled span end time or stamp (`malformed`) is fixed in the
+deployment's instrumentation, and `unknown_id` after a prune's retention
+window is a replay artefact rather than a live incident. The fix text has a
+branch for every reason the runtime emits so those cases are not confused
+with a revoked or forged ticket.
+
+**What this does not cover.** A ticket that was never presented (RT-007); the
+principal being who the directory says they are, which is the directory's job:
+the Console keeps it from the IdP's SCIM push through Ory Polis, and the
+change feed the engine diffs from its snapshots is what revokes; a valid ticket presented by a workload
+that is not the one it was issued to, when the workload id was fused unattested
+(the summary's `tickets_unattested` count names how many verified tickets
+fused only the name, on actions of any status, and
+`tickets_contract_unchecked` how many verified against the binding alone
+because no join index gave the runtime a live hash to compare the policyhash
+against); pruned history, since a replayed trace older than the store's
+retention window finds no ticket and reads `unknown_id`, where inside the
+window it read the verdict it gave when live.
 
 ---
 

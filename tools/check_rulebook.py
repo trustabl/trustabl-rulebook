@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Rulebook consistency gate.
 
-Cross-checks the shipped detection rules (the `trustabl-rules` pack) against the
-rulebook's per-policy rationale docs. This is the rulebook analog of the
-engine's `TestPolicyRules_AllRulesCovered` guard: it fails CI when the book
-drifts from the rules users actually receive.
+Cross-checks the shipped detection rules (the `agent-reliability-rules` pack)
+against the rulebook's per-policy rationale docs. This is the rulebook analog
+of the engine's `TestPolicyRules_AllRulesCovered` guard: it fails CI when the
+book drifts from the rules users actually receive.
 
 It enforces three things:
 
-  1. COVERAGE   — every rule in trustabl-rules has a rationale doc covering it.
+  1. COVERAGE   — every rule in agent-reliability-rules has a rationale doc
+                  covering it.
   2. CONSISTENCY — each doc's front-matter (severity / confidence / scope) matches
                    the rule's YAML. The book may not claim a severity the engine
                    does not ship.
@@ -39,7 +40,9 @@ Usage:
     --rules-repo  Path to the trustabl-rules checkout (default: ../trustabl-rules,
                   or $TRUSTABL_RULES_REPO).
     --strict      Treat rationale docs with NO front-matter as errors (default:
-                  warn — lets the migration land incrementally).
+                  warn). Every doc carries front-matter and CI passes --strict,
+                  so the lenient default exists only for a work-in-progress doc
+                  on a local run.
 
 Exit code: 0 = clean, 1 = at least one error (or a strict warning).
 """
@@ -65,7 +68,7 @@ HINT_ID_RE = re.compile(r"^HINT-\d{4}$")
 
 @dataclass
 class RuleSpec:
-    """One rule as shipped in trustabl-rules (the source of truth)."""
+    """One rule as shipped in agent-reliability-rules (the source of truth)."""
 
     rule_id: str
     severity: str
@@ -103,7 +106,7 @@ class RationaleDoc:
     references: list[str] = field(default_factory=list)
 
 
-# ── loading trustabl-rules ──────────────────────────────────────────────────
+# ── loading agent-reliability-rules ─────────────────────────────────────────
 
 
 def load_rules(rules_repo: Path) -> tuple[dict[str, RuleSpec], list[str]]:
@@ -226,6 +229,11 @@ def check(
     warnings: list[str] = []
 
     documented: set[str] = set()
+    # rule id -> the doc that claimed it first, for the duplicate message.
+    first_doc: dict[str, str] = {}
+    # policy_id disagreements are a per-doc fact; report each doc once rather
+    # than once per rule it carries.
+    pid_reported: set[Path] = set()
 
     for doc in docs:
         rel = doc.path.relative_to(rulebook_repo).as_posix()
@@ -243,7 +251,33 @@ def check(
                     f"(removed or typo)"
                 )
                 continue
+            # COVERAGE — a rule may be documented once. Two docs claiming the
+            # same rule both satisfy coverage, so nothing caught it, and the
+            # assembled book would carry that rule's defense twice under
+            # different chapters. The likely cause is splitting a policy doc
+            # and copying its front-matter without pruning the id list.
+            if rid in documented:
+                errors.append(
+                    f"{rel}: {rid} is already documented by "
+                    f"{first_doc[rid]}"
+                )
+            else:
+                first_doc[rid] = rel
             documented.add(rid)
+
+            # PLACEMENT — policy_id. The template guide calls this a MUST
+            # ("MUST equal policy.id in the paired YAML") and nothing enforced
+            # it: the field was parsed on both sides and never compared.
+            if (
+                doc.policy_id
+                and doc.policy_id != spec.policy_id
+                and doc.path not in pid_reported
+            ):
+                pid_reported.add(doc.path)
+                errors.append(
+                    f"{rel}: policy_id {doc.policy_id!r} != pack "
+                    f"{spec.policy_id!r} ({spec.source})"
+                )
 
             # CONSISTENCY
             if dr.severity is not None and dr.severity != spec.severity:
@@ -306,8 +340,18 @@ def check(
 def main() -> int:
     ap = argparse.ArgumentParser(description="Rulebook consistency gate.")
     default_rules = os.environ.get("TRUSTABL_RULES_REPO", "../trustabl-rules")
-    ap.add_argument("--rules-repo", default=default_rules)
-    ap.add_argument("--strict", action="store_true")
+    ap.add_argument(
+        "--rules-repo",
+        default=default_rules,
+        help="path to the trustabl-rules checkout "
+             "(default: %(default)s, or $TRUSTABL_RULES_REPO)",
+    )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="treat a doc with no YAML front-matter as an error rather than a "
+             "warning; CI runs with this on",
+    )
     args = ap.parse_args()
 
     rulebook_repo = Path(__file__).resolve().parent.parent

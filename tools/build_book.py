@@ -31,12 +31,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
 
 from check_rulebook import load_rules
-from gen_index import SDK_FULL, SDK_LABEL, SDK_ORDER, numeric_id, risk_score
+from gen_index import (SDK_FULL, SDK_LABEL, SDK_ORDER, escape_cell, numeric_id,
+                       risk_score)
 
 FRONT_MATTER = re.compile(r"^---\n.*?\n---\n", re.DOTALL)
 # A markdown link whose target points at a rulebook .md file -> keep only the text.
@@ -75,8 +77,9 @@ def appendix_table(rules) -> str:
     )
     headers = ["Id", "SDK", "Scope", "Sev", "Conf", "Risk", "Policy"]
     rows = [
-        [r.rule_id, SDK_LABEL.get(r.category, r.category), r.scope, r.severity,
-         f"{r.confidence:.2f}", risk_score(r.severity, r.confidence), r.title]
+        [escape_cell(c) for c in
+         [r.rule_id, SDK_LABEL.get(r.category, r.category), r.scope, r.severity,
+          f"{r.confidence:.2f}", risk_score(r.severity, r.confidence), r.title]]
         for r in ordered
     ]
     widths = [len(h) for h in headers]
@@ -118,8 +121,21 @@ def build(repo: Path, rules_repo: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Assemble the rulebook into one markdown for Pandoc.")
-    ap.add_argument("--rules-repo", default="../trustabl-rules")
-    ap.add_argument("--out", default="build/trustabl-rulebook.md")
+    # Same resolution as check_rulebook.py and gen_index.py: the env var is how
+    # `make book` is pointed at a non-sibling pack, and all three steps of that
+    # pipeline have to agree about which pack they are reading.
+    default_rules = os.environ.get("TRUSTABL_RULES_REPO", "../trustabl-rules")
+    ap.add_argument(
+        "--rules-repo",
+        default=default_rules,
+        help="path to the trustabl-rules checkout "
+             "(default: %(default)s, or $TRUSTABL_RULES_REPO)",
+    )
+    ap.add_argument(
+        "--out",
+        default="build/trustabl-rulebook.md",
+        help="where to write the assembled markdown (default: %(default)s)",
+    )
     args = ap.parse_args()
 
     repo = Path(__file__).resolve().parent.parent
@@ -131,8 +147,18 @@ def main() -> int:
 
     out = repo / args.out
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(build(repo, rules_repo), encoding="utf-8", newline="\n")
-    print(f"wrote {out.relative_to(repo)}")
+    # write_bytes (not write_text(newline=...)) keeps the output LF on every
+    # platform AND runs on Python 3.9 — write_text's newline kwarg is 3.10+,
+    # which crashes assembly under the repo's default python3. Same reasoning
+    # as gen_index.py.
+    out.write_bytes(build(repo, rules_repo).encode("utf-8"))
+    # A path outside the repo has no relative form; report it as given rather
+    # than raising after the file has already been written.
+    try:
+        shown = out.relative_to(repo)
+    except ValueError:
+        shown = out
+    print(f"wrote {shown}")
     return 0
 
 
