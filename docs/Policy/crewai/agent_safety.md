@@ -23,6 +23,11 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
+  - id: CREW-111
+    severity: low
+    confidence: 0.6
+    scope: agent
+    fix_type: config
 references: [LLM05, LLM06, LLM10]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM05, LLM06, LLM10]
 
 **Policy ID:** `crewai_agent_safety`  
 **File:** `crewai/agent_safety.yaml`  
-**Rules:** CREW-101, CREW-102, CREW-104, CREW-110  
-**Severities:** high, high, medium, low  
-**Fix types:** config, config, config, config  
+**Rules:** CREW-101, CREW-102, CREW-104, CREW-110, CREW-111  
+**Severities:** high, high, medium, low, low  
+**Fix types:** config, config, config, config, config  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -205,6 +210,43 @@ check is presence-only: an `Agent(max_iter=9999)` satisfies it while being no
 real bound at all. Those over-flags are what hold it at 0.6 rather than the
 0.9 the unambiguous literal-value rules carry.
 
+### CREW-111 — CrewAI agent has no max_execution_time wall-clock limit (Severity: low, Confidence: 0.6, Fix type: config)
+
+**What we detect:**
+An `Agent(...)` call with no effective `max_execution_time` kwarg (absent, or an
+explicit `None`; predicate `agent_kwarg_missing`), unless the call passes `config=`
+(`not: agent_kwarg_present: [config]`). The `config=` exemption covers agents
+built from a YAML/dict definition, whose real kwargs are not visible.
+
+**Why it is flaggable:**
+`max_iter` (CREW-110) bounds the number of reasoning steps, not their duration. A
+single step that blocks on a slow tool, a stalled connection or an unusually long
+model response is not counted, so a run can stay open indefinitely while holding
+its tools and credentials live and accruing cost (LLM10, Unbounded Consumption).
+`max_execution_time` is CrewAI's native per-task wall-clock cap in seconds.
+
+**Real-world consequence:**
+A research agent calls a scraping tool that hangs on an unresponsive host; the
+iteration counter never advances, the crew never finishes, and the worker slot is
+held until an operator notices.
+
+**Why severity is low and not medium:**
+The impact is availability and cost, bounded by whatever supervises the process;
+no new capability is granted to the model. It complements CREW-110 as a hygiene
+control rather than flagging a defect.
+
+**Fix type — config:**
+One constructor kwarg, no tool source changes.
+
+**Confidence 0.6:**
+**False positives:** a wall-clock bound enforced outside the agent (a task-level
+timeout in the orchestrator, a container kill, per-tool timeouts that already bound
+every step) is invisible. `Agent(**kwargs)` is opaque to the analyzer and the
+missing-kwarg predicate does not consult that flag, so a splat-built agent that
+does set the kwarg is flagged; this is the same exposure CREW-110 ships with.
+**False negatives:** the `config=` exemption silences agents that are built from a
+config which lacks the key; the check is presence-only, so a huge value passes.
+
 ---
 
 ## What this policy does not cover
@@ -229,6 +271,9 @@ real bound at all. Those over-flags are what hold it at 0.6 rather than the
 - Kwargs supplied via `**config` unpacking are not recorded, and CREW-110 does
   not consult the resulting opaque flag, so a config-driven `Agent(**cfg)`
   that sets `max_iter` still fires.
+- For CREW-111: wall-clock limits enforced outside the Agent (orchestrator
+  timeouts, per-tool timeouts, a container kill) and config-driven agents (`config=`
+  is exempted as unreadable, which also hides ones that genuinely lack the key).
 
 ---
 
