@@ -28,6 +28,11 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: config
+  - id: PYD-108
+    severity: low
+    confidence: 0.55
+    scope: agent
+    fix_type: code
 references: [LLM05, LLM06, LLM10]
 ---
 
@@ -35,9 +40,9 @@ references: [LLM05, LLM06, LLM10]
 
 **Policy ID:** `pydantic_ai_agent_safety`  
 **File:** `pydantic_ai/agent_safety.yaml`  
-**Rules:** PYD-101, PYD-102, PYD-103, PYD-105, PYD-106  
-**Severities:** low, high, medium, low, low  
-**Fix types:** config, config, config, config, config  
+**Rules:** PYD-101, PYD-102, PYD-103, PYD-105, PYD-106, PYD-108  
+**Severities:** low, high, medium, low, low, low  
+**Fix types:** config, config, config, config, config, code  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -170,7 +175,9 @@ channel to attacker URLs. For `WebSearchTool`, the model-chosen query is itself 
 exfiltration channel, and the returned results are attacker-reachable text that
 re-enters the context as a second-order prompt-injection channel. Pydantic AI's
 built-in fetchers have needed SSRF hardening (CVE-2026-46678, CVE-2026-25580), so
-enabling one without egress controls reintroduces that exposure.
+enabling one without egress controls reintroduces that exposure. The fix text also notes that
+`WebFetchTool(allowed_domains=...)` narrows destinations on Anthropic only (Google ignores it), so it is
+not a substitute for process-level egress controls.
 
 **Real-world consequence:** an agent with `WebFetchTool` is injected to fetch
 `http://169.254.169.254/latest/meta-data/iam/security-credentials/`, and the
@@ -269,6 +276,35 @@ skipped as unresolvable (`Opaque: true`), a cap enforced by a wrapper or retry
 harness outside the call itself is invisible, and a `usage_limits` value
 passed via a variable the scanner cannot resolve to a literal reads as absent.
 
+### PYD-108 — Pydantic AI run call has no wall-clock timeout (Severity: low, Confidence: 0.55, Fix type: code)
+
+**What we detect:** a Pydantic AI `Agent` with at least one resolvable `run` /
+`run_sync` / `run_stream` call (same-file, non-opaque, matched by the receiver
+variable name) where none of those calls sits structurally inside an
+`asyncio.wait_for(...)` argument or an `asyncio.timeout` / `anyio.move_on_after` /
+`anyio.fail_after` `with` block (predicate
+`agent_run_call_wall_clock_timeout_missing`, shared with OAI-120 but authored as a
+separate rule with Pydantic-AI-specific text). The check is a structural ancestor
+walk, not a same-file text search.
+
+**Why it is flaggable:** `usage_limits` (PYD-106) caps request count and token
+spend, but says nothing about elapsed time: a stalled provider connection or a slow
+tool call blocks the run indefinitely while it holds the worker and its tool
+credentials, entirely inside the configured limits.
+
+**Real-world consequence:** a tool awaiting a hung upstream API never returns; the
+`agent.run(...)` awaiting it holds a request slot forever, and enough of them wedge
+the service without ever tripping `UsageLimitExceeded`.
+
+**Why severity is low and not medium:** provider SDK clients carry default network
+timeouts that bound the worst stalls, and the impact is availability and cost rather
+than a data or integrity exposure. **Fix type — code:** the timeout wraps the call
+site (optionally with `ModelSettings(timeout=...)` for the model request itself).
+
+**Confidence 0.55:** a deadline owned by the caller of the enclosing function, a web
+framework's request timeout, or a task supervisor is invisible to the same-function
+check, so the rule over-flags library-style code.
+
 ---
 
 ## What this policy does not cover
@@ -295,6 +331,10 @@ passed via a variable the scanner cannot resolve to a literal reads as absent.
   is not independently verified or asserted as a specific number in this doc,
   beyond the language already present in the shipped rule's own explanation
   text.
+- For PYD-108: a deadline applied by a caller, framework middleware or process
+  supervisor is invisible — only a wrapper enclosing the run call inside the same
+  function is credited. A `ModelSettings(timeout=...)` bounds one model request but
+  not a slow tool call or the whole run, and is not credited by this rule.
 
 ---
 
