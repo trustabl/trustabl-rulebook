@@ -25,7 +25,7 @@ references: [LLM06, LLM02]
 **Fix types:** code, code  
 **References:** LLM06 (Excessive Agency), LLM02 (Sensitive Information Disclosure)
 
-> Shares the SSRF threat model with [openai_sdk/ssrf.md](../openai_sdk/ssrf.md).
+> Shares the SSRF threat model with [claude_sdk/ssrf.md](../claude_sdk/ssrf.md).
 > This document covers the MCP-specific mechanism: the destination is chosen by
 > a model reading untrusted content, so the attacker never needs to reach the
 > server directly.
@@ -208,6 +208,18 @@ with a 302 pointing at it. The check ran, passed, and protected nothing —
 
 ---
 
+## Allow-list credit
+
+MCP-008, MCP-013 used to fire on every non-literal destination, including tools that had already constrained the host, which made the rule a false-positive source for exactly the code that followed its own fix advice. The match is now `has_dynamic_url_call` **and not** a recognized host allow-list in the tool body. Severity, confidence and scope are unchanged.
+
+**Python (MCP-008).** The rule is silenced when the function body contains a hostname membership test against a named allow-list: `.hostname not in`, `.netloc not in`, or one of `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `allowed_hosts`, `allowed_domains`, `HOST_ALLOWLIST`, `host_allowlist` (predicate `not: has_body_text`). A bare `.hostname in` is deliberately *not* credited, because it cannot tell an allow-list from a deny-list.
+
+**TypeScript (MCP-013).** The rule is silenced when the handler both reads a host (`.hostname` / `.host`) and tests membership (`.includes(` / `.has(`), or references a named allow-list (`allowedHosts`, `allowedDomains`, `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `hostAllowlist`). Reading `new URL(x).hostname` with no membership test does not silence it.
+
+The credit is textual and body-local. It does not verify that the allow-list is correct, that the check runs before the request, or that the request cannot be redirected to a host outside it; HTTPS-only enforcement and a redirect cap are recommended in each rule's fix text but are not separately detected.
+
+---
+
 ## What this policy does not cover
 
 - **Whether the dynamic value is genuinely attacker-reachable.** The predicate is
@@ -239,7 +251,13 @@ with a 302 pointing at it. The check ran, passed, and protected nothing —
 - **What is done with the response.** Returning a fetched body into the
   conversation is what completes the disclosure path, and that is not part of
   this predicate.
-
+- **Allow-list credit is textual.** An allow-list enforced in a helper or
+  middleware outside the tool body, or checked under a name outside the
+  recognized set (see Allow-list credit), is not credited and still fires. In
+  TypeScript, a membership test unrelated to the URL host that sits beside a
+  `.host` read over-credits and silences the rule. Redirects and non-HTTPS
+  schemes are not detected.
+  
 ---
 
 ## Recommendations beyond the fix

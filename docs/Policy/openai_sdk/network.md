@@ -211,13 +211,23 @@ Marginally above the Python OAI-018's 0.55 because the TS fact is *structural* �
 keys on the AST type of the first argument of a recognized HTTP-client call, so a
 literal URL is correctly excluded by construction (no substring guesswork). The gap
 that remains: **false positives** — a non-literal URL that is in fact a validated
-or constant value (an ID checked against an allow-list in another module, or a base
-URL read from config) still fires, because the body-only walk does not see the
-validation and does not reason about whether the value is constant. **False
+or constant value (an ID checked against an allow-list in another module or under a name outside the Allow-list credit set, or a base URL read from config) still fires, because the body-only walk does not see the validation and does not reason about whether the value is constant. **False
 negatives** — an HTTP client outside the recognized set (`node:http`/`https`
 `request`, `superagent`, `ky`, a wrapped client), a URL passed positionally to a
 helper that performs the fetch, or a `new URL(base, modelValue)` constructed before
 the call all escape the first-argument check on a known callee.
+
+---
+
+## Allow-list credit
+
+OAI-018, OAI-024 used to fire on every non-literal destination, including tools that had already constrained the host, which made the rule a false-positive source for exactly the code that followed its own fix advice. The match is now `has_dynamic_url_call` **and not** a recognized host allow-list in the tool body. Severity, confidence and scope are unchanged.
+
+**Python (OAI-018).** The rule is silenced when the function body contains a hostname membership test against a named allow-list: `.hostname not in`, `.netloc not in`, or one of `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `allowed_hosts`, `allowed_domains`, `HOST_ALLOWLIST`, `host_allowlist` (predicate `not: has_body_text`). A bare `.hostname in` is deliberately *not* credited, because it cannot tell an allow-list from a deny-list.
+
+**TypeScript (OAI-024).** The rule is silenced when the handler both reads a host (`.hostname` / `.host`) and tests membership (`.includes(` / `.has(`), or references a named allow-list (`allowedHosts`, `allowedDomains`, `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `hostAllowlist`). Reading `new URL(x).hostname` with no membership test does not silence it.
+
+The credit is textual and body-local. It does not verify that the allow-list is correct, that the check runs before the request, or that the request cannot be redirected to a host outside it; HTTPS-only enforcement and a redirect cap are recommended in each rule's fix text but are not separately detected.
 
 ---
 
@@ -229,6 +239,7 @@ the call all escape the first-argument check on a known callee.
 - Retries without backoff. A tool that times out cleanly but retries in a tight loop is still a denial-of-budget hazard; that is OAI-009 / idempotency territory, not this policy.
 - For OAI-024: HTTP clients outside the recognized `fetch`/`axios`/`got`/`undici` set (`node:http`/`https` `request`, `superagent`, `ky`, a wrapped client), a URL constructed via `new URL(base, modelValue)` before the call, and a model-supplied value passed positionally into a helper that performs the fetch — all escape the first-argument check on a known callee.
 - For OAI-016: a timeout reached indirectly — an options object passed by identifier, a `signal`/`AbortController` bound on a separate line, a `Promise.race` deadline, or an `axios.create({ timeout })` instance — is not seen, so the rule fires on some already-bounded calls; conversely a non-deadline `signal: req.signal` or an `axios` `timeout: 0` ("no timeout") is treated as bounded and does not fire.
+- An allow-list enforced in a helper or middleware outside the tool body, an allow-list check that uses a name outside the recognized set, and a membership test that is unrelated to the URL host but happens to sit beside a `.host` read (TypeScript over-credit). Redirects and non-HTTPS schemes are not detected.
 
 ---
 

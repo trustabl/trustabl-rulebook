@@ -75,16 +75,23 @@ services or metadata endpoint gets far less); it is not the unconditional code
 execution the engine reserves critical for. **Fix type — code:** constraining or
 hard-coding the destination is an edit to the tool body. **Confidence 0.8:** the
 predicate flags a non-literal URL, so it over-fires when the dynamic part is
-already validated against an allow-list inside the body (the rule cannot see the
-guard), and under-fires when the URL is assembled in a helper in another module.
+already validated against an allow-list inside the body under a name outside the Allow-list credit set, and under-fires when the URL is assembled in a helper in another module.
+
+---
+
+## Allow-list credit
+
+AG2-011 used to fire on every non-literal destination, including tools that had already constrained the host, which made the rule a false-positive source for exactly the code that followed its own fix advice. The match is now `has_dynamic_url_call` **and not** a recognized host allow-list in the tool body. Severity, confidence and scope are unchanged.
+
+**Python (AG2-011).** The rule is silenced when the function body contains a hostname membership test against a named allow-list: `.hostname not in`, `.netloc not in`, or one of `ALLOWED_HOSTS`, `ALLOWED_DOMAINS`, `allowed_hosts`, `allowed_domains`, `HOST_ALLOWLIST`, `host_allowlist` (predicate `not: has_body_text`). A bare `.hostname in` is deliberately *not* credited, because it cannot tell an allow-list from a deny-list.
+
+The credit is textual and body-local. It does not verify that the allow-list is correct, that the check runs before the request, or that the request cannot be redirected to a host outside it; HTTPS-only enforcement and a redirect cap are recommended in each rule's fix text but are not separately detected.
 
 ---
 
 ## What this policy does not cover
 
-- A request whose URL is dynamic but already validated against an allow-list
-  inside the tool body — the rule cannot see the guard, so it fires anyway (a
-  known false positive).
+- A request whose URL is dynamic but already validated against an allow-list inside the tool body under a name the rule does not recognize — the credit only sees the names listed under Allow-list credit, so it still fires (a known false positive).
 - A fetch assembled in a helper in another module — the body-only walk misses it.
 - DNS-rebinding and time-of-check/time-of-use attacks against an allow-list that
   validates the hostname but not the resolved IP. Defeating those requires
@@ -93,6 +100,7 @@ guard), and under-fires when the URL is assembled in a helper in another module.
   SMTP) belongs to other concerns.
 - Missing-timeout on the same request is a separate reliability rule
   (**AG2-012**, network.md).
+- An allow-list enforced in a helper or middleware outside the tool body, an allow-list check that uses a name outside the recognized set, and a membership test that is unrelated to the URL host but happens to sit beside a `.host` read (TypeScript over-credit). Redirects and non-HTTPS schemes are not detected.
 
 ---
 
