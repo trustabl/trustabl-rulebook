@@ -75,7 +75,8 @@ the library that adds process-metadata labels (run identity, step order,
 argument and result fingerprints, attempt count, side-effect class, exit reason)
 to spans the agent already emits. They read a separate set of typed records,
 `OtelLabelsSignal`, produced by the scanner's `DiscoverOtelLabels` pass, with
-a `Kind` of `import`, `run_start`, `tool_span` or `run_end`, plus the recon fact
+a `Kind` of `import`, `run_start`, `tool_span`, `run_end` or `attr_literal` (a
+`trustabl.*` label key written to a span by hand), plus the recon fact
 `RepoProfile.OtelLabelsDeclaredIn`. These records are kept out of the
 `ObservabilitySignal` set on purpose: `agent-reliability-otel-labels` never creates a span, so
 counting it as observability would let the library satisfy its own prerequisite.
@@ -377,7 +378,10 @@ no root manifest declares it (`agent-reliability-otel-labels` or `agent_reliabil
 `pyproject.toml`, `requirements.txt`, `Pipfile` or `poetry.lock`;
 `@trustabl/agent-reliability-otel-labels` in `package.json`), and no parsed Python or
 TypeScript/JavaScript file imports `agent_reliability_otel_labels` or `@trustabl/agent-reliability-otel-labels`. Either
-half alone silences the rule.
+half alone silences the rule. So does a `trustabl.*` label key written to a
+span by hand: a string literal passed as the first argument of `set_attribute` /
+`setAttribute`, or a literal key of the mapping passed to `set_attributes` /
+`setAttributes`. A repo that writes the labels without the library has them.
 
 **Why it is flaggable:**  
 A span produced by an agent framework's instrumentation records that a tool ran,
@@ -409,8 +413,8 @@ all, and the nine per-SDK absence rules sit at `low` for that reason. This rule
 also recommends a specific library, published by the authors of the scanner, as
 the remedy. That is a recommendation about depth of diagnosis, not a defect in
 the agent, and it should not outrank findings that are. The same labels can be
-written by hand; the rule names the library because it is the implementation
-the scanner can recognize.
+written by hand, and hand-written keys are credited (see above); the rule names
+the library as the remedy because it writes every label consistently.
 
 **Fix type — code:**  
 Installing the package changes nothing on its own. The remedy is the labelling
@@ -432,8 +436,10 @@ The 0.3 gap:
   declares the library in `services/agent/pyproject.toml` is credited only
   through its import, so a package that is declared there and not yet imported
   draws this rule instead of OBS-007.
-- **Hand-written labels.** A repo that sets the `trustabl.*` attribute keys
-  directly with `span.set_attribute` has the labels and will still fire.
+- **Hand-written labels the scanner cannot read.** A hand-written key is
+  credited only when it appears as a string literal in the call. A key held in
+  a constant, passed as `set_attribute(key=...)`, or built from a TypeScript
+  template string is not, and a repo that writes its labels that way will fire.
 
 ---
 
@@ -446,7 +452,9 @@ started (`repo_otel_labels_initialized: false`). A run is started by a call to
 `mark_start` on a `Run` — `<run>.mark_start(...)` in Python,
 `<run>.markStart(...)` in TypeScript/JavaScript. The call must have a receiver:
 a bare `mark_start(...)` is some other function. Constructing a `Run` does not
-count, and neither do `mark_tool_span` or `mark_run_end` calls on their own.
+count, and neither do `mark_tool_span` or `mark_run_end` calls on their own. A
+`trustabl.run_id` key written to a span by hand (as in OBS-006) counts as a
+started run.
 
 **Why it is flaggable:**  
 `mark_start` is the call that writes `trustabl.run_id` on the root span. Every
@@ -481,8 +489,8 @@ and `run.mark_start(root)` on the root span as soon as it is open.
 **Confidence 0.65:**  
 The 0.35 gap:
 - **A run started through a wrapper.** A project helper that receives the `Run`
-  and calls `mark_start` is seen. One that hides the call behind `getattr`, or
-  imports it under an alias the call-name match does not follow, is not.
+  and calls `mark_start` is seen. One that hides the call behind `getattr` is
+  not.
 - **Lock-file-only declarations.** `poetry.lock` counts as installed here,
   unlike OBS-005, because nothing depends on `agent-reliability-otel-labels` transitively. A
   lock file left over after the dependency was removed from `pyproject.toml`
@@ -507,7 +515,11 @@ the model calls, a `mark_tool_span` / `markToolSpan` call as well. The tool
 obligation is read from the typed inventory: a tool counts when its kind is one
 an agent framework emits a tool-execution span for. A bare shell-invoking
 function and a LangGraph node do not count, and a repo with no such tool needs
-only the run end.
+only the run end. A call is recognized under a renamed import
+(`from agent_reliability_otel_labels import mark_tool_span as mts`,
+`import { markToolSpan as label }`). Keys written to a span by hand (as in
+OBS-006) also count: `trustabl.exit_reason` as the run end, and
+`trustabl.tool.input_fp` or `trustabl.tool.attempt` as a labelled tool span.
 
 **Why it is flaggable:**  
 A started run with no labels is a root span carrying a run id and nothing else.
