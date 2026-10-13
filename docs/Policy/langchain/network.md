@@ -32,7 +32,7 @@ references: [LLM10]
 Network-call hygiene inside LangChain Python tool functions. **LC-007** uses the
 `call_without_kwarg` predicate: it fires when a discovered `langchain_tool` body
 invokes a `requests` HTTP method (`get`, `post`, `put`, `delete`, `patch`,
-`head`, `request`) — including the `requests.Session.*` forms — without a
+`head`, `request`), or `requests.Session.get` / `requests.Session.post`, without a
 `timeout=` keyword argument. A call that already passes a finite `timeout=` does
 not fire. Literal `timeout=None` is treated as missing (same engine behavior as
 sibling packs). This initial rule is **Requests-specific**; `httpx`, `urllib`,
@@ -89,8 +89,8 @@ through an ordinary tool call.
 **What we detect:**  
 A LangChain Python tool (`@tool`, `StructuredTool.from_function`, or equivalent
 `langchain_tool` discovery) whose body calls `requests.get` / `post` / `put` /
-`delete` / `patch` / `head` / `request`, or the matching `requests.Session.*`
-methods, without a `timeout=` keyword (predicate `call_without_kwarg`,
+`delete` / `patch` / `head` / `request`, or `requests.Session.get` /
+`requests.Session.post`, without a `timeout=` keyword (predicate `call_without_kwarg`,
 `missing: timeout`). Literal `timeout=None` counts as missing.
 
 **Why it is flaggable:**  
@@ -139,6 +139,9 @@ Honest engine / scope limitations for LC-007:
 - **Session / client-level wrappers** — a timeout configured on a
   `requests.Session` (or similar) may not be visible at the per-call site, so the
   rule can still fire.
+- **Other Session methods** — only `Session.get` and `Session.post` are listed
+  callees; `Session.put` / `delete` / `patch` / `head` / `request` without a
+  timeout are not flagged.
 - **Helper / wrapper functions** — a call that goes through a local helper which
   injects `timeout=` can escape detection if the tool body only shows the helper
   call.
