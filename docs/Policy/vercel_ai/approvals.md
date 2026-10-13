@@ -3,7 +3,7 @@ policy_id: vercel_ai_approvals
 category: vercel_ai
 topic: approvals
 rules:
-  - id: VAI-013
+  - id: VAI-018
     severity: high
     confidence: 0.7
     scope: tool
@@ -15,7 +15,7 @@ references: [LLM06]
 
 **Policy ID:** `vercel_ai_approvals`
 **File:** `vercel_ai/approvals.yaml`
-**Rules:** VAI-013
+**Rules:** VAI-018
 **Severities:** high
 **Fix types:** config
 **References:** LLM06 (Excessive Agency)
@@ -25,16 +25,16 @@ references: [LLM06]
 ## What this policy covers
 
 The Vercel AI SDK's human-in-the-loop `needsApproval` gate on sensitive tool
-calls defaults to `false`. **VAI-013** (tool scope) fires when a `tool()` or
+calls defaults to `false`. **VAI-018** (tool scope) fires when a `tool()` or
 `dynamicTool()` whose `execute()` body shells out or evaluates code has no
 effective `needsApproval` gate. The option is absent or explicitly `false`.
 Passing `true` or a per-call approval function both count as a gate and do not
 fire. This complements capability rules **VAI-001** (subprocess) and
 **VAI-002** (eval / `new Function`): those flag the dangerous operation;
-VAI-013 flags the missing checkpoint around it.
+VAI-018 flags the missing checkpoint around it.
 
 SDK 7 moved approval from individual tool definitions to `toolApproval` on
-`generateText`, `streamText`, or `ToolLoopAgent`. VAI-013 inspects only the
+`generateText`, `streamText`, or `ToolLoopAgent`. VAI-018 inspects only the
 tool-level `needsApproval` option. It cannot yet verify a separate SDK 7 call
 or agent-level `toolApproval` configuration, so such code may need manual
 review after this rule fires.
@@ -71,7 +71,7 @@ agent, but Trustabl does not yet correlate that setting with an individual tool.
 
 ## Rule-by-rule defense
 
-### VAI-013 — Privileged tool has no needsApproval gate (Severity: high, Confidence: 0.7, Fix type: config)
+### VAI-018 — Privileged tool has no needsApproval gate (Severity: high, Confidence: 0.7, Fix type: config)
 
 **What we detect:** a `vercel_ai_tool` whose `execute()` body shells out or runs
 `eval` / `new Function` (`has_shell_call` / `has_code_exec_call`) and has no
@@ -108,7 +108,7 @@ rule.
 
 ## Unsafe and safe examples
 
-### Unsafe — missing gate (fires VAI-013)
+### Unsafe — missing gate (fires VAI-018)
 
 ```typescript
 import { tool } from "ai";
@@ -128,7 +128,7 @@ export const runShell = tool({
 });
 ```
 
-### Unsafe — explicit false (fires VAI-013)
+### Unsafe — explicit false (fires VAI-018)
 
 ```typescript
 export const runShell = tool({
@@ -197,7 +197,7 @@ await streamText({
 });
 ```
 
-This pattern moves approval off the tool definition. VAI-013 can still fire
+This pattern moves approval off the tool definition. VAI-018 can still fire
 because the tool has no `needsApproval` option and the rule cannot see the
 separate `toolApproval` configuration. Treat this as a manual-review finding
 until Trustabl adds call or agent-level approval correlation.
@@ -213,13 +213,13 @@ paths; it only checks that a gate exists.
 
 **External middleware:** if your application intercepts tool calls outside the
 SDK (custom run loop, proxy, workflow step) without setting `needsApproval` or
-`toolApproval`, VAI-013 still fires. The rule reads tool constructor options,
+`toolApproval`, VAI-018 still fires. The rule reads tool constructor options,
 not out-of-band approval infrastructure the engine cannot see. Document such
 designs in AGENTS.md and pair them with agent-level tests.
 
 **SDK 7 migration:** `needsApproval` on `tool()` is deprecated. Prefer
 `toolApproval` on `generateText`, `streamText`, or `ToolLoopAgent` so approval
-policy can vary per request. VAI-013 cannot verify that setting yet, so record
+policy can vary per request. VAI-018 cannot verify that setting yet, so record
 the result as a known limitation. See the [7.0 migration guide](https://ai-sdk.dev/docs/migration-guides/migration-guide-7-0).
 
 ---
@@ -263,7 +263,7 @@ export const deploy = tool({
 
 1. Set `needsApproval: true` on every supported tool that runs commands or
    executes code, and implement approval handling in your run loop or UI. SDK 7
-   users should configure `toolApproval` and treat VAI-013 as a known tool-level
+   users should configure `toolApproval` and treat VAI-018 as a known tool-level
    limitation until call-level detection exists.
 2. Where approval must be automated, replace the human gate with strict input
    validation and document why; do not rely on an implicit default.
