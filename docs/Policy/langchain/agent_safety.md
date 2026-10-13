@@ -33,17 +33,17 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: code
-references: [LLM06, LLM10]
+references: [LLM01, LLM02, LLM06, LLM10]
 ---
 
 # Policy Rationale: LangChain Agent Safety
 
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
-**Rules:** LC-101, LC-102, LC-111, LC-113, LC-114
-**Severities:** high, low, low, low, medium
-**Fix types:** code, config, config, config, code
-**References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
+**Rules:** LC-101, LC-102, LC-103, LC-111, LC-113, LC-114
+**Severities:** high, low, medium, low, low, medium
+**Fix types:** code, config, code, config, config, code
+**References:** LLM01 (Prompt Injection), LLM02 (Sensitive Information Disclosure), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
 
@@ -51,7 +51,7 @@ references: [LLM06, LLM10]
 
 Agent-scope rules for the constructor-shaped LangChain / LangGraph agents Trustabl
 discovers: `create_react_agent` and `create_agent` (normalized class `ReactAgent` /
-`CreateAgent`) and the legacy `AgentExecutor`. The rules cover the two highest-signal
+`CreateAgent`) and the legacy `AgentExecutor`. The rules cover the three highest-signal
 agent-level risks: wiring a code-execution/shell built-in tool (LC-101), wiring a
 raw HTTP `Requests*` built-in whose destination the model chooses (LC-103), and a
 tool-calling loop with no explicit iteration cap (LC-102 / LC-111).
@@ -276,11 +276,16 @@ largest false-positive classes: unresolved call sites and Platform repos.
 
 ## What this policy does not cover
 
-The raw `StateGraph` agent (discovery gap), the `Requests*` SSRF built-ins (recorded
-as hosted edges but not yet a dedicated agent rule), v1 `create_agent` middleware
-quality, and whether a code-execution tool is *actually* sandboxed out of band. The
-iteration rules check `AgentExecutor` only — `create_react_agent` / `create_agent`
-enforce their own recursion limit differently and are out of scope here.
+The raw `StateGraph` agent (discovery gap), v1 `create_agent` middleware quality, and
+whether a code-execution tool is *actually* sandboxed out of band. The iteration rules
+check `AgentExecutor` only — `create_react_agent` / `create_agent` enforce their own
+recursion limit differently and are out of scope here.
+- For LC-103: only direct wiring of the five known `Requests*` classes. It does not
+  see `RequestsToolkit` (same capability, assembled through `get_tools()`), the
+  `Tool(func=requests_wrapper.get)` wrapper form, a custom `BaseTool` subclass that
+  hand-rolls an arbitrary fetch, or any other library's HTTP tool. It also cannot tell
+  whether an allow-list, an egress proxy, or a pinned base URL is already enforcing
+  the destination, so a properly constrained deployment still fires.
 - For LC-113: wall-clock limits enforced outside the executor, and the TypeScript
   `AgentExecutor` (no verified equivalent option, so no rule ships).
 - For LC-114: a graph whose `compile(...)` is chained onto the constructor, built
