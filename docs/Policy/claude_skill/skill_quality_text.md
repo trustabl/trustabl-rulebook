@@ -513,12 +513,12 @@ signal.
 - **Substring, not word-boundary, matching — CSKILL-082..087 only.**
   CSKILL-080 and CSKILL-081 were moved onto `skill_text_matches`, a
   sentence-scoped, word-boundary predicate (see their entries above); the
-  remaining five rules in this pack still use the raw-substring
+  remaining six rules in this pack still use the raw-substring
   `skill_*_has_text` predicates (`strings.Contains`), so short or common
   fragments still false-positive on unrelated words that happen to contain
   them: `audit` inside `auditorium` and `scan` inside `scanner` (CSKILL-082),
   `log` inside `catalog` / `dialog` / `logic` and `store` inside `restore`
-  (CSKILL-086). These five were not moved onto the new predicate because no
+  (CSKILL-086), `todo` inside `todos` (CSKILL-087). These six were not moved onto the new predicate because no
   confirmed false positive has been reported against them yet — see
   `CLAUDE.md`'s two-repo rule model for the sync obligation this would carry
   if the fixture ever changed here without a matching production change.
