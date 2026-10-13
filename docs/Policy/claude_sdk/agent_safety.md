@@ -14,7 +14,7 @@ rules:
     scope: agent
     fix_type: config
   - id: CSDK-103
-    severity: critical
+    severity: high
     confidence: 0.9
     scope: agent
     fix_type: config
@@ -29,7 +29,7 @@ rules:
     scope: agent
     fix_type: config
   - id: CSDK-120
-    severity: critical
+    severity: high
     confidence: 0.9
     scope: agent
     fix_type: config
@@ -76,7 +76,7 @@ references: [LLM01, LLM06, LLM10]
 **Policy ID:** `claude_sdk_agent_safety`  
 **File:** `claude_sdk/agent_safety.yaml`  
 **Rules:** CSDK-101, CSDK-102, CSDK-103, CSDK-104, CSDK-105, CSDK-120, CSDK-121, CSDK-122, CSDK-123, CSDK-124, CSDK-130, CSDK-131, CSDK-114  
-**Severities:** high, medium, critical, high, high, critical, high, medium, high, high, high, high, low  
+**Severities:** high, medium, high, high, high, high, high, medium, high, high, high, high, low  
 **Fix types:** config, config, config, config, config, config, config, config, config, config, config, config, config  
 **References:** LLM01, LLM06, LLM10
 
@@ -117,7 +117,7 @@ approval prompt is the one in-band control between a model-chosen tool call and 
 real effect; bypass removes it for every tool the subagent holds. A subagent that
 is granted `Bash` *and* runs under bypass is, in effect, unattended arbitrary
 command execution driven by model output. That is why the bypass rules — CSDK-103
-and its TypeScript twin CSDK-120 — are the only critical-severity rules in this
+and its TypeScript twin CSDK-120 — are the highest-confidence rules in this
 file, and why the others repeatedly warn against pairing a grant with bypass.
 
 The grants split along two threat lines. `Bash` and the write built-ins are
@@ -175,7 +175,7 @@ are a primary prompt-injection vector with no SDK-level filtering.
 **Confidence 0.8:** Some subagents genuinely need search; the grant alone is a
 strong but not certain signal.
 
-### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions with a broad tool set (Severity: critical, Confidence: 0.9, Fix type: config)
+### CSDK-103 — AgentDefinition sets permissionMode to bypassPermissions with a broad tool set (Severity: high, Confidence: 0.9, Fix type: config)
 
 **What we detect:** `permissionMode="bypassPermissions"` on the
 AgentDefinition (`agent_kwarg_value`), combined (`match: all:`) with either
@@ -201,18 +201,16 @@ defaulting to broad) for that to matter.
 model-chosen commands and file writes unattended; a single injection becomes an
 unguarded action.
 
-**Why severity is critical and not high:** The grant rules in this file
+**Why severity is high and not medium:** The grant rules in this file
 (CSDK-101/104/105) each hand the subagent one dangerous capability, but the SDK's
 interactive approval gate still stands between a model-chosen call and its
-effect — that residual control is what caps them at high. Bypass removes the
-control itself, for every tool at once. No partial mitigation survives inside the
-SDK: the permission prompt *is* the in-band mitigation, and with it gone,
-whatever the subagent holds — `Bash`, the write built-ins, `WebFetch` — executes
-on model output alone. A single injected instruction is then a completed side
-effect, not a pending approval. This is the same end state the repo-scope rules
-CSDK-201/202 flag when bypass is set at the session level (see
-[repo.md](repo.md)), and it carries the same critical classification there:
-severity follows the end state, not the declaration site.
+effect. Bypass removes the control itself, for every tool at once: whatever the
+subagent holds — `Bash`, the write built-ins, `WebFetch` — executes on model
+output alone. Not critical because exploitation still requires the subagent to
+be driven to a harmful action (injection or error); the bypass is the enabling
+condition, not the exploit. This is the same calibration the repo-scope rules
+CSDK-201/202 carry when bypass is set at the session level (see
+[repo.md](repo.md)): severity follows the end state, not the declaration site.
 
 **Fix type — config:** Drop the kwarg or set `default`/`acceptEdits`; if
 autonomous operation is required, scope `tools` to the minimal read-only set
@@ -268,7 +266,7 @@ allowlists hosts and blocks internal ranges (see also [ssrf.md](ssrf.md)).
 
 **Confidence 0.75:** Legitimate fetch use is frequent; treat as a review prompt.
 
-### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions with a broad tool set (Severity: critical, Confidence: 0.9, Fix type: config)
+### CSDK-120 — TypeScript AgentDefinition sets permissionMode to bypassPermissions with a broad tool set (Severity: high, Confidence: 0.9, Fix type: config)
 
 **What we detect:** A TypeScript `AgentDefinition` with the kwarg
 `permissionMode: "bypassPermissions"` (predicate `agent_kwarg_value`, matching
@@ -278,7 +276,7 @@ either `tools` is omitted (inherits every tool available to subagents) or it
 grants a side-effecting/exfiltration-capable built-in (Bash, Write, Edit,
 NotebookEdit, WebFetch, WebSearch, Agent, Task). This is the TypeScript twin
 of the Python rule
-[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-with-a-broad-tool-set-severity-critical-confidence-09-fix-type-config);
+[CSDK-103](#csdk-103--agentdefinition-sets-permissionmode-to-bypasspermissions-with-a-broad-tool-set-severity-high-confidence-09-fix-type-config);
 see that entry for why the `tools` co-check is sound here where an
 `allowed_tools` co-check on `ClaudeAgentOptions` (repo scope) would not be.
 
@@ -293,16 +291,17 @@ model-generated task description then reaches its tools (including `Bash`,
 model-chosen commands and file writes unattended; a single prompt-injected
 instruction becomes an unguarded action with no human in the loop.
 
-**Why severity is critical and not high:** Same defense as the Python sibling
-CSDK-103. The tool-grant rules (CSDK-121/123/124) stop at high because the SDK's
-approval gate remains as the final control over each model-chosen call; bypass
-deletes that gate for every tool the definition grants, and no partial mitigation
-is left inside the SDK once its only in-band control is off. A prompt-injected
-instruction then completes as an unattended side effect through whatever the
-`tools` array holds. The end state — model output acting on the host with no
-human approval — is identical whether bypass is declared in Python (CSDK-103), in
-TypeScript (this rule), or at the session level (CSDK-201/202, repo scope), so
-all four carry critical.
+**Why severity is high and not medium:** Same defense as the Python sibling
+CSDK-103. The tool-grant rules (CSDK-121/123/124) each add one capability while
+the SDK's approval gate remains as the final control over each model-chosen call;
+bypass deletes that gate for every tool the definition grants, so a
+prompt-injected instruction completes as an unattended side effect through
+whatever the `tools` array holds. Not critical because the bypass is the
+enabling condition, not the exploit: the agent must still be driven to a harmful
+action. The end state — model output acting on the host with no human approval —
+is identical whether bypass is declared in Python (CSDK-103), in TypeScript (this
+rule), or at the session level (CSDK-201/202, repo scope), so all four carry the
+same high.
 
 **Fix type — config:** Drop the kwarg or set a safe mode (`"default"` /
 `"acceptEdits"`); if autonomous operation is required, scope `tools` to the
