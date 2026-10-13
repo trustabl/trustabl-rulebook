@@ -20,7 +20,7 @@ rules:
     fix_type: config
   - id: PYD-104
     severity: medium
-    confidence: 0.8
+    confidence: 0.7
     scope: agent
     fix_type: config
   - id: PYD-105
@@ -45,9 +45,9 @@ references: [LLM05, LLM06, LLM10]
 
 **Policy ID:** `pydantic_ai_agent_safety`  
 **File:** `pydantic_ai/agent_safety.yaml`  
-**Rules:** PYD-101, PYD-102, PYD-103, PYD-105, PYD-106, PYD-108  
-**Severities:** low, high, medium, low, low, low  
-**Fix types:** config, config, config, config, config, code  
+**Rules:** PYD-101, PYD-102, PYD-103, PYD-104, PYD-105, PYD-106, PYD-108  
+**Severities:** low, high, medium, medium, low, low, low  
+**Fix types:** config, config, config, config, config, config, code  
 **References:** LLM05 (Improper Output Handling), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -61,8 +61,12 @@ type — `output_type` is absent (defaulting to `str`) or set explicitly to `str
 **PYD-102** fires when the agent wires `CodeExecutionTool` (predicate
 `agent_uses_hosted_tool_class`). **PYD-103** fires when the agent wires a native
 web-retrieval tool — `WebFetchTool`, `UrlContextTool`, or `WebSearchTool` (same
-predicate). **PYD-105** fires when `end_strategy="exhaustive"` (predicate
-`agent_kwarg_value`). **PYD-106** is different in kind from the four above: it
+predicate). **PYD-104** fires when a FileUrl-family constructor
+(`ImageUrl` / `AudioUrl` / `VideoUrl` / `DocumentUrl`) or a wired
+`WebFetchTool` sets `force_download` to `True` or `"allow-local"` (predicates
+`agent_file_url_force_download` OR `agent_hosted_tool_kwarg_value`).
+**PYD-105** fires when `end_strategy="exhaustive"` (predicate
+`agent_kwarg_value`). **PYD-106** is different in kind from the five above: it
 does not read the constructor at all, but correlates this agent's construction
 site to the `run`/`run_sync`/`run_stream` call(s) that execute it and fires
 when none of them sets `usage_limits` — an execution-limit / cost concern
@@ -204,10 +208,10 @@ egress controls — no tool source edit. **Confidence 0.75:** the rule flags the
 tool's presence, not a proven reachable internal target, so it over-flags agents
 that only ever fetch vetted external URLs or run behind a strict egress allow-list.
 
-### PYD-104 — FileUrl or WebFetchTool forces a host-side download (Severity: medium, Confidence: 0.8, Fix type: config)
+### PYD-104 — Pydantic AI FileUrl forces a host-side download (Severity: medium, Confidence: 0.7, Fix type: config)
 
-**What we detect:** a FileUrl-family constructor (`FileUrl` / `ImageUrl` /
-`AudioUrl` / `VideoUrl` / `DocumentUrl`) in the agent's file with
+**What we detect:** a FileUrl-family constructor (`ImageUrl` / `AudioUrl` /
+`VideoUrl` / `DocumentUrl`) in the agent's file with
 `force_download=True` or `force_download="allow-local"` (predicate
 `agent_file_url_force_download`), or a wired `WebFetchTool` with the same kwarg
 (predicate `agent_hosted_tool_kwarg_value`). The default `False` is silent.
@@ -232,10 +236,12 @@ blocklist the CVEs hardened, so the worst metadata/private-IP hits need
 `"allow-local"` or a bypass the blocklist missed; impact also depends on
 whether the host can reach internal services at all. **Fix type — config:**
 leave `force_download` at `False`, or keep `True` only for URLs you control —
-no tool-body edit. **Confidence 0.8:** the kwarg match is precise, but
-discovery attributes a FileUrl to every Pydantic agent in the same file, so a
-multi-agent file over-flags agents that do not themselves construct the URL —
-the gap that holds it from 0.9.
+no tool-body edit. **Confidence 0.7:** the kwarg match itself is precise; the
+gap is attribution and intent. A FileUrl is credited to every Pydantic agent in
+the same file, so a multi-agent file over-flags agents that do not themselves
+construct the URL, and a `force_download=True` on a URL the team controls (a
+fixed bucket, an internal asset host) still fires although no caller- or
+model-supplied URL can reach it.
 
 ### PYD-105 — Agent retries with the exhaustive end strategy (Severity: low, Confidence: 0.7, Fix type: config)
 
@@ -359,7 +365,7 @@ check, so the rule over-flags library-style code.
 - Hand-rolled URL fetches inside a tool body — caught by **PYD-005** (ssrf.md);
   PYD-103 covers only the native fetcher tools.
 - Whether the agent's prompt surface is actually reachable by untrusted content —
-  all five rules flag a configuration, not a proven injection path.
+  every rule here flags a configuration, not a proven injection path.
 - PYD-101 cannot tell whether a `str` output is consumed by code (risky) or only
   shown to a human (safe); PYD-105 cannot tell whether pending tools have side
   effects.
@@ -405,6 +411,7 @@ agent = Agent(
     end_strategy="early",        # skip pending tool calls once a result is final
     tools=[vetted_lookup],       # no CodeExecutionTool / WebFetchTool
 )
+# FileUrl-family: leave force_download at False (never "allow-local").
 
 result = agent.run_sync(
     user_input,
@@ -430,6 +437,6 @@ result = agent.run_sync(
    are reset.
 5. Leave `end_strategy` at `early` unless every callable tool is side-effect-free
    and you specifically need the remaining calls to complete.
-5. Pass `usage_limits=UsageLimits(...)` sized to the task on whichever
+6. Pass `usage_limits=UsageLimits(...)` sized to the task on whichever
    `run`/`run_sync`/`run_stream` call executes the agent, and keep it
    consistent across every call site that runs the same agent.
