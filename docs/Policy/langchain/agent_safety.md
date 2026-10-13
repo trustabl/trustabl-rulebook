@@ -4,7 +4,7 @@ category: langchain
 topic: agent_safety
 rules:
   - id: LC-101
-    severity: critical
+    severity: high
     confidence: 0.85
     scope: agent
     fix_type: code
@@ -36,7 +36,7 @@ references: [LLM06, LLM10]
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
 **Rules:** LC-101, LC-102, LC-111, LC-113, LC-114
-**Severities:** critical, low, low, low, medium
+**Severities:** high, low, low, low, medium
 **Fix types:** code, config, config, config, code
 **References:** LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
@@ -86,7 +86,7 @@ unsized loop fail in different orders of magnitude.
 
 ## Rule-by-rule defense
 
-### LC-101 — Agent wires a code-execution or shell built-in tool (Severity: critical, Confidence: 0.85, Fix type: code)
+### LC-101 — Agent wires a code-execution or shell built-in tool (Severity: high, Confidence: 0.85, Fix type: code)
 
 **What we detect:** a LangChain agent (`ReactAgent` / `CreateAgent` / `AgentExecutor`)
 whose resolved tool set includes `PythonREPLTool`, `PythonAstREPLTool`, or
@@ -106,19 +106,15 @@ granted the ability to run anything.
 given a `PythonREPLTool`; a crafted question makes it run `__import__('os').system(...)`
 and read the deployment's secrets.
 
-**Severity critical:** the engine reserves critical for unconditional execution, and
-these built-ins are exactly that tier. `PythonREPLTool` / `PythonAstREPLTool` run
-model-generated Python via an in-process `exec()`/eval in the agent's own
-interpreter, and `ShellTool` hands the model a host subprocess shell — no container,
-no allowlist, no approval gate anywhere in the tool itself. There is no partial
-mitigation for the finding to credit: unlike CrewAI's `allow_code_execution`
-(CREW-101, high), where model code still lands inside a Docker sandbox in the
-default `safe` mode and an attack must additionally escape it, LangChain ships
-these classes with no boundary at all — wiring the tool *is* granting execution
-with the agent process's credentials, filesystem, and network. A single injected
-instruction closes the gap between text and host compromise in one tool call,
-which is why the fix is removal or an out-of-band sandbox-and-gate, not a safer
-configuration of the same tool. **Confidence 0.85:** a few agents legitimately
+**Severity high:** the capability is the defect; the fix is to remove the built-in or
+sandbox-and-gate it. `PythonREPLTool` / `PythonAstREPLTool` run model-generated
+Python via an in-process `exec()`/eval in the agent's own interpreter, and
+`ShellTool` hands the model a host subprocess shell — no container, no allowlist,
+no approval gate anywhere in the tool itself. It is kept off critical for the same
+calibration reason as CREW-102 (CrewAI's `unsafe` host execution, also high): the
+engine reserves that tier, and the rule still requires that the agent actually be
+driven to the tool by model-influenced input — an agent exercised only on trusted,
+non-injectable input never reaches it. **Confidence 0.85:** a few agents legitimately
 need a REPL and have sandboxed it out of band, which the class-name match cannot
 see.
 
