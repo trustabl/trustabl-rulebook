@@ -33,6 +33,11 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: code
+  - id: LC-116
+    severity: high
+    confidence: 0.6
+    scope: agent
+    fix_type: code
 references: [LLM01, LLM02, LLM06, LLM10]
 ---
 
@@ -40,9 +45,9 @@ references: [LLM01, LLM02, LLM06, LLM10]
 
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
-**Rules:** LC-101, LC-102, LC-103, LC-111, LC-113, LC-114
-**Severities:** high, low, medium, low, low, medium
-**Fix types:** code, config, code, config, config, code
+**Rules:** LC-101, LC-102, LC-103, LC-111, LC-113, LC-114, LC-116
+**Severities:** high, low, medium, low, low, medium, high
+**Fix types:** code, config, code, config, config, code, code
 **References:** LLM01 (Prompt Injection), LLM02 (Sensitive Information Disclosure), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -54,10 +59,13 @@ discovers: `create_react_agent` and `create_agent` (normalized class `ReactAgent
 `CreateAgent`) and the legacy `AgentExecutor`. The rules cover the three highest-signal
 agent-level risks: wiring a code-execution/shell built-in tool (LC-101), wiring a
 raw HTTP `Requests*` built-in whose destination the model chooses (LC-103), and a
-tool-calling loop with no explicit iteration cap (LC-102 / LC-111).
+tool-calling loop with no explicit iteration cap (LC-102 / LC-111). LC-116 flags a
+LangGraph graph or agent whose checkpointer is in-memory (`MemorySaver` /
+`InMemorySaver`) while it is run from a server entrypoint, so its threads do not
+survive a restart, a deploy, or a second worker.
 
-The raw `StateGraph` graph agent is a documented discovery gap — its tools and model
-are assembled across many call sites, so it is not yet modeled as a single agent.
+The raw `StateGraph` graph is in scope too: LC-101 and LC-103 apply to its tool set,
+and LC-114 and LC-116 check how it is checkpointed.
 
 ---
 
@@ -272,14 +280,72 @@ Platform deployment whose `langgraph.json` lives outside the scanned tree;
 `agent_kwargs_observed` and `langgraph.json` clauses exist precisely to cut the two
 largest false-positive classes: unresolved call sites and Platform repos.
 
+### LC-116 — LangGraph graph with an in-memory checkpointer is run from a server entrypoint (Severity: high, Confidence: 0.6, Fix type: code)
+
+**What we detect:** a LangGraph `StateGraph` or a `create_react_agent` /
+`create_agent` agent that meets all three predicates:
+- `agent_checkpointer_in_memory: true` — its checkpointer is `MemorySaver` /
+  `InMemorySaver`;
+- `agent_server_reachable: true` — it is run from a server entrypoint: a FastAPI or
+  Flask route, or a Celery or Dramatiq task;
+- `repo_langgraph_platform_config_present: false` — the repo ships no
+  `langgraph.json`.
+
+**Why it is flaggable:** an in-memory saver keeps every thread's state in a dict
+inside one process. Behind a server, a restart, a deploy, a crash, or a second
+worker loses all in-flight threads, their completed steps, and any `interrupt()`
+pause awaiting human approval, and a retry re-executes side-effecting nodes from
+the start. Because a checkpointer *is* configured, the graph looks durable when it
+is not — a reviewer asking "does this graph have a checkpointer?" gets a yes.
+
+**Real-world consequence:** an approval workflow behind a FastAPI route pauses at
+`interrupt()` until a manager approves a refund. A deploy restarts the process
+before the approval arrives; the thread is gone, the approval has nothing to resume,
+and the resubmitted request re-runs the nodes that had already run. Or the service
+scales to a second worker, and a resume request lands on the process that never
+held the thread.
+
+**Why severity is high and not medium (LC-114):** the pack rates LC-116 high where
+LC-114 (no checkpointer) is medium, and the configured checkpointer hides the loss
+from review.
+
+**Fix type — code:** the saver is chosen in the `.compile(...)` call (the same
+`checkpointer=` applies to `create_react_agent`): pass a durable one in production,
+e.g. `builder.compile(checkpointer=PostgresSaver(...))`, `AsyncPostgresSaver` or
+`RedisSaver`, keep `MemorySaver` for tests, and invoke with
+`config={"configurable": {"thread_id": ...}}` so each conversation resumes from its
+own persisted thread.
+
+**Confidence 0.6:** the rule's limits are stated in the pack:
+- reachability follows one hop per edge — the entrypoint itself, a same-file helper
+  it calls, or an imported helper it calls — so a graph run through a helper of a
+  helper is not seen;
+- a graph built or compiled inside a factory function is not tracked;
+- a saver chosen at runtime (an environment variable, a config object) is not
+  resolved, and the rule stays silent;
+- a subgraph is reported only when it is itself invoked from a server path;
+- test paths are ignored;
+- the rule is silent when the repo ships a `langgraph.json` (LangGraph Platform
+  injects its own checkpointer).
+
+Recall on real server code is unmeasured.
+
+**Relationship to LC-114:** LC-114 requires the `checkpointer` kwarg to be missing
+(`agent_kwarg_missing`); LC-116 requires an in-memory checkpointer to be present
+(`agent_checkpointer_in_memory`). The two cannot both hold for the same graph, so
+it draws at most one of them: no checkpointer is LC-114 (medium), an in-memory one
+reached from a server entrypoint is LC-116 (high). An in-memory checkpointer that no
+server entrypoint reaches draws neither. Both stay silent when the repo ships a
+`langgraph.json`.
+
 ---
 
 ## What this policy does not cover
 
-The raw `StateGraph` agent (discovery gap), v1 `create_agent` middleware quality, and
-whether a code-execution tool is *actually* sandboxed out of band. The iteration rules
-check `AgentExecutor` only — `create_react_agent` / `create_agent` enforce their own
-recursion limit differently and are out of scope here.
+v1 `create_agent` middleware quality and whether a code-execution tool is *actually*
+sandboxed out of band. The iteration rules check `AgentExecutor` only —
+`create_react_agent` / `create_agent` enforce their own recursion limit differently
+and are out of scope here.
 - For LC-103: only direct wiring of the five known `Requests*` classes. It does not
   see `RequestsToolkit` (same capability, assembled through `get_tools()`), the
   `Tool(func=requests_wrapper.get)` wrapper form, a custom `BaseTool` subclass that
@@ -293,7 +359,11 @@ recursion limit differently and are out of scope here.
   linked to its kwargs, so the rule stays silent rather than guess. A subgraph
   compiled in another file than the parent that mounts it cannot be recognised as a
   subgraph and may be flagged. A `checkpointer=` pointing at a throwaway
-  `MemorySaver()` in production satisfies the rule without giving real durability.
+  `MemorySaver()` in production satisfies LC-114 without giving real durability;
+  LC-116 reports it only when a server entrypoint reaches the graph.
+- For LC-116: a graph reached through more than one helper hop, built or compiled
+  inside a factory function, or given a saver chosen at runtime is not seen, and
+  recall on real server code is unmeasured.
 
 ---
 
@@ -301,10 +371,11 @@ recursion limit differently and are out of scope here.
 
 Remove REPL/shell built-ins from production agents; if code execution is required,
 run it in an isolated sandbox and gate it behind a human-in-the-loop approval (a
-LangGraph `interrupt_before` breakpoint or a tool-approval middleware). Set
-`max_iterations` / `maxIterations` (and a `max_execution_time`) sized to the task,
-and set `handle_parsing_errors` so a malformed model step surfaces rather than
-retrying forever.
+LangGraph `interrupt_before` breakpoint or a tool-approval middleware); a graph that
+serves requests needs a durable checkpointer for that pause to survive a restart
+(LC-114, LC-116). Set `max_iterations` / `maxIterations` (and a `max_execution_time`)
+sized to the task, and set `handle_parsing_errors` so a malformed model step surfaces
+rather than retrying forever.
 
 For outbound HTTP, prefer a purpose-built tool that pins the base URL and takes only a
 path or query from the model over a generic `Requests*` built-in. Where open fetching is
