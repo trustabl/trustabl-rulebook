@@ -8,6 +8,11 @@ rules:
     confidence: 0.7
     scope: tool
     fix_type: code
+  - id: MCP-029
+    severity: low
+    confidence: 0.5
+    scope: tool
+    fix_type: code
 references: [LLM02, LLM06]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM02, LLM06]
 
 **Policy ID:** `mcp_path_safety`  
 **File:** `mcp/path_safety.yaml`  
-**Rules:** MCP-005  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** MCP-005, MCP-029  
+**Severities:** high, low  
+**Fix types:** code, code  
 **References:** LLM02 (Sensitive Information Disclosure), LLM06 (Excessive Agency)
 
 > Shares the path-traversal threat model with
@@ -39,6 +44,11 @@ accepts two path arguments and calls `.resolve()` on one of them still fires on
 the other. That design choice matters: it means partial hardening does not
 silence the rule, which is the common shape when a handler grows a second path
 argument later.
+
+TypeScript MCP tool handlers are covered by MCP-029 (`language: typescript`),
+which matches any filesystem write in the handler (`has_write_call: true`). The
+pack calls it a coarse signal: it flags any write, not only unnormalized paths,
+because TypeScript path-normalization analysis is not yet wired.
 
 ---
 
@@ -148,6 +158,40 @@ delegates its I/O elsewhere presents the same shape and is also missed. The
 rule's own explanation asks the reader to confirm the parameter is caller-
 supplied, which is an accurate statement of what the 0.3 gap represents.
 
+### MCP-029 — TypeScript MCP tool writes to the filesystem (Severity: low, Confidence: 0.5, Fix type: code)
+
+**What we detect:**  
+A TypeScript MCP tool handler that writes to the filesystem, matched by
+`has_write_call: true`. The match does not look at where the path comes from
+or whether it was normalized.
+
+**Why it is flaggable:**  
+If the path or the contents derive from the tool's arguments, the caller on the
+other side of the protocol chooses both. That caller is a model, steerable by
+a prompt injection carried in retrieved content or an earlier tool result. The
+server cannot see the injection: it receives a well-formed `tools/call` for a
+path it has no way to distinguish from a legitimate one.
+
+**Real-world consequence:**  
+A stdio server is launched as a subprocess by whatever client the user is
+running, so it inherits that user's own filesystem permissions rather than a
+service account's. A `save_note(path, content)` tool whose write escapes its
+intended directory reaches the user's home directory, dotfiles, and SSH keys.
+
+**Fix type — code:**  
+Containment is added in the handler: resolve the final path and verify it
+stays under a dedicated root before writing, or derive the filename
+server-side. That is an edit to the handler source.
+
+**Confidence 0.5:**  
+The pack states the limit itself. The rule is a coarse signal: it flags any
+filesystem write, not only one with an unnormalized path, because TypeScript
+path-normalization analysis is not yet wired. **False positives:** a handler
+that already confines its writes, or writes only to a path the server chooses,
+fires the same as one that writes wherever the caller says. The rule's
+explanation asks the reader to confirm the path is genuinely caller-supplied
+before acting.
+
 ---
 
 ## What this policy does not cover
@@ -178,10 +222,14 @@ supplied, which is an accurate statement of what the 0.3 gap represents.
 - **Whether the allowed root is sensibly chosen.** A handler that resolves
   correctly and asserts containment under `/` passes the rule and contains
   nothing.
-- **TypeScript MCP tools.** MCP-005 is `language: python`. There is no
-  TypeScript path-normalization predicate in `mcp/path_safety.yaml`, so TS
-  filesystem risk is currently approximated only by the shell and code-execution
-  rules, which do not cover a plain `fs.readFile` with a caller-supplied path.
+- **TypeScript path containment.** MCP-005 is `language: python`. The
+  TypeScript rule, MCP-029, flags any filesystem write and does not check
+  whether the path was resolved or contained, because TypeScript
+  path-normalization analysis is not yet wired. A contained write and an
+  escaping one produce the same finding.
+- **TypeScript reads.** MCP-029 matches writes (`has_write_call`).
+  `mcp/path_safety.yaml` has no TypeScript rule for reads, so a plain
+  `fs.readFile` with a caller-supplied path is not covered by this policy.
 
 ---
 
@@ -241,3 +289,45 @@ def read_file(relative_path: str) -> dict:
 6. Where the set of legitimate files is known, take an identifier rather than a
    path and look the real location up server-side. As with SSRF, the strongest
    version of this fix removes the caller's ability to name a destination at all.
+
+The TypeScript equivalent for MCP-029:
+
+```typescript
+import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+const NOTES_ROOT = path.resolve("/srv/workspace/notes");
+
+const server = new McpServer({ name: "notes", version: "1.0.0" });
+
+server.registerTool(
+  "save_note",
+  {
+    description:
+      "Save a note's text under the notes directory and return its generated " +
+      "id. The server chooses the filename; callers never pass a path.",
+    inputSchema: { text: z.string().max(100_000) },
+  },
+  async ({ text }) => {
+    const id = randomUUID();
+    const target = path.resolve(NOTES_ROOT, `${id}.md`);
+    const rel = path.relative(NOTES_ROOT, target);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) {
+      return { isError: true, content: [{ type: "text", text: "path_outside_root" }] };
+    }
+    await writeFile(target, text, { encoding: "utf8", flag: "wx" });
+    return { content: [{ type: "text", text: id }] };
+  },
+);
+```
+
+7. In TypeScript, confine writes to a dedicated working directory: resolve the
+   final path, verify it stays under that root before writing, and reject
+   absolute paths and any input containing `..`.
+8. Where the tool only ever writes generated names, derive the filename
+   server-side from an id, as above, rather than accepting a path over the
+   protocol at all.
