@@ -8,6 +8,11 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-024
+    severity: high
+    confidence: 0.6
+    scope: tool
+    fix_type: code
 references: [LLM10]
 ---
 
@@ -15,9 +20,9 @@ references: [LLM10]
 
 **Policy ID:** `mcp_network`  
 **File:** `mcp/network.yaml`  
-**Rules:** MCP-004  
-**Severities:** high  
-**Fix types:** code  
+**Rules:** MCP-004, MCP-024  
+**Severities:** high, high  
+**Fix types:** code, code  
 **References:** LLM10 (Unbounded Consumption)
 
 > Shares the timeout threat model with
@@ -38,6 +43,11 @@ and bare `urlopen`, and `aiohttp.ClientSession.get` and `aiohttp.ClientSession.p
 (aliased sessions canonicalize to that form). A `timeout` kwarg present with a
 literal `None` counts as missing, since `None` disables the timeout rather than
 setting one.
+
+TypeScript MCP tool handlers are covered by MCP-024 (`language: typescript`),
+which matches `has_http_call_without_timeout: true`. The rule's explanation
+describes the target as an outbound HTTP call (`fetch` / `axios` / `got` /
+`undici`) with no deadline: no `signal`, `timeout`, or `abortSignal` option.
 
 ---
 
@@ -71,6 +81,13 @@ the first is still waiting. Each retry consumes another worker and none of them
 are released. That is OWASP LLM10 (Unbounded Consumption): an ordinary tool
 invocation, against a host the tool author does not control, exhausts server
 capacity with no attacker action required beyond being slow to answer.
+
+MCP-024 applies the policy's premise to TypeScript: the MCP runtime does not
+enforce timeouts on tool code, and a hung request inside a handler stalls the
+server's response to the connecting client. Node's `fetch` has no implicit
+deadline, so a slow or unresponsive upstream blocks the handler until the
+socket eventually dies, and the connecting client is left waiting on a JSON-RPC
+response that never arrives.
 
 ---
 
@@ -132,6 +149,45 @@ and to a call already wrapped in `asyncio.wait_for(...)`. **False negatives:** a
 client aliased across a function or module boundary is not resolved, so a helper
 that returns a configured session hides the call from the rule.
 
+### MCP-024 — TypeScript MCP tool HTTP call has no timeout (Severity: high, Confidence: 0.6, Fix type: code)
+
+**What we detect:**  
+A TypeScript MCP tool handler that makes an outbound HTTP call with no
+deadline, matched by `has_http_call_without_timeout: true`. The rule's
+explanation names the clients (`fetch`, `axios`, `got`, `undici`) and the
+missing options (`signal`, `timeout`, `abortSignal`).
+
+**Why it is flaggable:**  
+Node's `fetch` has no implicit deadline. Without one of those options, a slow
+or unresponsive upstream blocks the handler until the socket eventually dies,
+and the connecting client is waiting on a JSON-RPC response that never arrives.
+
+**Real-world consequence:**
+
+- A `fetch_page(url)` tool calls `await fetch(url)` against a host that never
+  answers. The client waits on a JSON-RPC response that never arrives. It is
+  left to its own timeout, an abandoned request, or a hung session, and nothing
+  in the response says why.
+- The same tool fetches a caller-controlled URL (MCP-013, in
+  [ssrf.md](ssrf.md)). With no timeout, it can be steered at an internal host
+  that never answers.
+
+**Why severity is high:**  
+The pack sets high. Its explanation gives three reasons the stall is worse than
+a local failure. The stall crosses the server's trust boundary rather than
+staying local: the connecting client is the one waiting on a JSON-RPC response
+that never arrives. On a stdio server a single process serves the connection,
+so a handler parked on a dead socket is holding it, which makes the effect
+worse than one slow tool. And the exposure compounds with MCP-013, as above.
+
+**Fix type — code:**  
+The deadline is attached at the call site: a `signal` for `fetch`, a `timeout`
+option for `axios` and `got`. That is an edit to the handler source.
+
+**Confidence 0.6:**  
+The pack sets confidence at 0.6 for this rule. It states no known false
+positives, false negatives, or other limits for MCP-024.
+
 ---
 
 ## What this policy does not cover
@@ -159,9 +215,11 @@ that returns a configured session hides the call from the rule.
   and retries in a loop without a ceiling passes this rule and reproduces the
   original failure. See MCP-006 for the related concern of surfacing the failure
   as a structured error rather than an opaque exception.
-- **TypeScript MCP tools.** MCP-004 is `language: python`; `fetch` in a TS
-  handler has no timeout by default and has no sibling rule in
-  `mcp/network.yaml`.
+- **Python HTTP limits do not carry over to TypeScript.** The bullets above
+  describe MCP-004's Python callee list. MCP-024 is a separate TypeScript rule,
+  and the pack states no limits for it.
+- **Languages other than Python and TypeScript.** `mcp/network.yaml` has
+  MCP-004 (`language: python`) and MCP-024 (`language: typescript`) only.
 
 ---
 
@@ -210,3 +268,43 @@ def fetch_page(url: str) -> dict:
    upstream outage.
 5. Never pass `timeout=None` to silence the rule. It disables the timeout
    entirely and is treated as missing by design.
+
+The TypeScript equivalent for MCP-024:
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+
+const server = new McpServer({ name: "fetcher", version: "1.0.0" });
+
+server.registerTool(
+  "fetch_page",
+  {
+    description:
+      "Fetch a URL and return its text. Times out after 15 seconds and " +
+      "returns a structured error instead of waiting.",
+    inputSchema: { url: z.string().url() },
+  },
+  async ({ url }) => {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+      const text = await response.text();
+      return { content: [{ type: "text", text }] };
+    } catch (err) {
+      const timedOut = err instanceof DOMException && err.name === "TimeoutError";
+      return {
+        isError: true,
+        content: [{ type: "text", text: timedOut ? `timeout fetching ${url}` : `fetch failed: ${url}` }],
+      };
+    }
+  },
+);
+```
+
+6. Attach a deadline to every outbound call. On runtimes without
+   `AbortSignal.timeout`, create an `AbortController`, abort it from a
+   `setTimeout`, pass `controller.signal`, and clear the timer in a `finally`.
+   `axios` and `got` take a `timeout` option directly.
+7. Return the abort as a structured tool result the model can act on, so the
+   client learns the upstream was unreachable rather than waiting on a response
+   that is not coming.
