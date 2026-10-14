@@ -63,6 +63,26 @@ rules:
     confidence: 0.85
     scope: tool
     fix_type: code
+  - id: MCP-025
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: MCP-026
+    severity: low
+    confidence: 0.8
+    scope: tool
+    fix_type: code
+  - id: MCP-027
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: MCP-028
+    severity: low
+    confidence: 0.8
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -70,7 +90,7 @@ references: [LLM06]
 
 **Policy ID:** `mcp_tool_definition`  
 **File:** `mcp/tool_definition.yaml`  
-**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022  
+**Rules:** MCP-001, MCP-002, MCP-003, MCP-011, MCP-015, MCP-016, MCP-017, MCP-018, MCP-019, MCP-020, MCP-021, MCP-022, MCP-025, MCP-026, MCP-027, MCP-028  
 **References:** LLM06 (Excessive Agency)
 
 > Shares the structural-hygiene threat model with
@@ -93,7 +113,10 @@ the Python rules; MCP-011 is the TypeScript description rule; MCP-015/016 are th
 Go rules; MCP-017 (no description) and MCP-018 (ambiguous name) are the C# rules;
 MCP-019 (no description) and MCP-020 (ambiguous name) are the PHP rules; MCP-021
 (no description) and MCP-022 (ambiguous name) are the Rust rules (official rmcp
-crate, `#[tool]`-attributed methods).
+crate, `#[tool]`-attributed methods). Four rules check the quality of a
+description that is present: MCP-025 (placeholder) and MCP-026 (too short) are
+the Python rules, and MCP-027 (placeholder) and MCP-028 (too short) are the
+TypeScript rules.
 
 ## Why definition hygiene is sharper for MCP than for an in-process SDK
 
@@ -108,8 +131,9 @@ Because the description is the main routing signal across an untrusted boundary,
 ## Rule-by-rule defense
 
 **Why this policy is scored low.** Every rule here except MCP-002 is low
-severity, and that is deliberate rather than an oversight repeated eleven times.
-A missing description or an ambiguous name degrades *selection*, not safety: the
+severity, and that is deliberate rather than an oversight repeated fifteen times.
+A missing, placeholder, or too-short description, or an ambiguous name, degrades
+*selection*, not safety: the
 tool still does exactly what it did, nothing new becomes reachable, and no
 attacker gains a primitive. What is lost is the model's ability to choose
 correctly — wrong-tool calls, skipped calls, wasted turns — which is a cost paid
@@ -304,9 +328,94 @@ than any doubt about the match. Note the Rust list holds nine names, not
 MCP-003's ten: `go` is omitted, since it is far more likely to be an ordinary
 word here than an ambiguous tool name.
 
+### MCP-025 — MCP tool description is a placeholder (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** a Python MCP tool whose description contains one of six
+placeholder markers, matched by `has_description_text`: `todo`, `tbd`, `fixme`,
+`placeholder`, `no description`, `does stuff`. The docstring passes the MCP-001
+has-a-description check; this rule looks at what it says.
+
+**Why it is flaggable:** the server advertises this string across the protocol
+boundary in its `tools/list` response, so it is the entire account of the tool
+that every connecting client and model receives. A stub like "TODO: describe
+this tool" is functionally indistinguishable from no description at all. Two
+things make a placeholder worse here than in an in-process SDK. The consumer
+has no other context to fall back on: it cannot read the source, the
+neighboring tools, or the project's docs the way a developer working in the repo
+can. And the server's authors never see the consequence, because mis-selection
+shows up in someone else's client session as a wrong answer, not as an error on
+this side of the connection.
+
+**Fix type — code:** replace the placeholder with a real description covering
+what the tool does, what it returns, and when a model should call it rather
+than a neighboring tool on this server.
+
+**Confidence 0.85:** the pack sets confidence at 0.85 for this rule. It states
+no known false positives, false negatives, or other limits for MCP-025.
+
+### MCP-026 — MCP tool description is too short to guide model selection (Severity: low, Confidence: 0.8, Fix type: code)
+
+**What we detect:** a Python MCP tool that has a docstring (`has_docstring:
+true`) whose description is under 40 characters (`description_length_lt: 40`).
+
+**Why it is flaggable:** the description is the whole of what the server
+publishes about the tool in `tools/list`. A stub like "Gets data." does not say
+what the tool does, what it returns, or when to call it rather than a similarly
+named neighbor, and it leaves scope and preconditions to guesswork for every
+client that connects. The ambiguity is not confined to this server's own tools:
+a client can connect several servers at once and the model chooses across all of them from these strings
+alone, so a thin description competes badly against a well-described tool from
+an unrelated server that only approximately fits the request.
+
+**Fix type — code:** expand the description to at least a full sentence
+covering inputs, outputs, and when this tool should be used over the
+alternatives, and name the domain the tool acts on rather than assuming the
+server name conveys it.
+
+**Confidence 0.8:** the pack sets confidence at 0.8 for this rule. It states
+no known false positives, false negatives, or other limits for MCP-026.
+
+### MCP-027 — TypeScript MCP tool description is a placeholder (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:** the same six placeholder markers as MCP-025
+(`has_description_text`), on a TypeScript MCP tool. The registration sets a
+description, so it passes MCP-011; this rule looks at what the description says.
+
+**Why it is flaggable:** the mechanism is MCP-025's. The string is published in
+`tools/list` as the entire account of the tool, and "TODO: describe this tool"
+tells a connecting client and model nothing the tool name did not.
+
+**Fix type — code:** the same fix as MCP-025, in the registration's
+`description`.
+
+**Confidence 0.85:** the pack sets confidence at 0.85 for this rule. It states
+no known false positives, false negatives, or other limits for MCP-027.
+
+### MCP-028 — TypeScript MCP tool description is too short to guide model selection (Severity: low, Confidence: 0.8, Fix type: code)
+
+**What we detect:** the same predicates as MCP-026 (`has_docstring: true` and
+`description_length_lt: 40`), on a TypeScript MCP tool.
+
+**Why it is flaggable:** the mechanism is MCP-026's. MCP-028's explanation adds
+one point that MCP-026's does not: the Zod input schema does not close the gap. It constrains the
+arguments once the model has chosen this tool, not whether choosing it was
+right.
+
+**Fix type — code:** the same fix as MCP-026, in the registration's
+`description`.
+
+**Confidence 0.8:** the pack sets confidence at 0.8 for this rule. It states no
+known false positives, false negatives, or other limits for MCP-028.
+
 ---
 
 ## What this policy does not cover
+
+The description-quality rules (MCP-025 to MCP-028) are Python and TypeScript
+only. The placeholder rules match a fixed list of six markers, so a placeholder
+worded any other way is not matched. The length rules use a 40-character
+threshold, so a description of 40 characters or more passes them whatever it
+says.
 
 Whether a present description is *accurate*, whether a typed schema is *correct*,
 and the low-level `Server` + `setRequestHandler` authoring shape (tools there are
