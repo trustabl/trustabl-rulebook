@@ -65,9 +65,9 @@ chooses where the write lands and what it contains, and a prompt injection can
 steer that choice.
 
 **Real-world consequence:**  
-A tool that takes a file path from the model reads a retrieved page carrying an
-injected instruction, and writes over a config file the application reads,
-with the application's own filesystem permissions.
+A tool takes a file path from the model. The model reads a retrieved page
+carrying an injected instruction, and the tool writes over a config file the
+application reads, with the application's own filesystem permissions.
 
 **Why severity is low:**  
 The pack sets low and states no reasoning for it. The explanation makes the

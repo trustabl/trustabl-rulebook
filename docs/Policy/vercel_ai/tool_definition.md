@@ -54,8 +54,9 @@ Authoring hygiene for Vercel AI SDK tools built with `tool({...})` /
 `description` says: VAI-013 matches one of six listed markers
 (`has_description_text`), and VAI-014 when it is under 40 characters
 (`has_docstring: true` AND `description_length_lt: 40`). **VAI-016** fires
-when the binding identifier (`VarName`) is an ambiguous name from the shared
-pack list (`process`, `handle`, `run`, …) via `name_in` — Vercel leaves `ToolDef.Name` empty, so the engine
+when the binding identifier (`VarName`) is an ambiguous name from the
+shared pack list (`process`, `handle`, `run`, …) via `name_in` —
+Vercel leaves `ToolDef.Name` empty, so the engine
 matches `VarName`. The `description` is the only model-visible account of the
 tool (the SDK has no docstring fallback), the `inputSchema` is what the SDK
 turns into the model's argument schema, and the binding name is what usually
