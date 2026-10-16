@@ -38,6 +38,16 @@ rules:
     confidence: 0.8
     scope: tool
     fix_type: code
+  - id: CSDK-021
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: CSDK-022
+    severity: low
+    confidence: 0.8
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -45,9 +55,9 @@ references: [LLM06]
 
 **Policy ID:** `claude_sdk_tool_definition`  
 **File:** `claude_sdk/tool_definition.yaml`  
-**Rules:** CSDK-001, CSDK-002, CSDK-007, CSDK-008, CSDK-014, CSDK-017, CSDK-018  
-**Severities:** low, medium, low, medium, low, low, low  
-**Fix types:** code, code, code, code, code, code, code  
+**Rules:** CSDK-001, CSDK-002, CSDK-007, CSDK-008, CSDK-014, CSDK-017, CSDK-018, CSDK-021, CSDK-022  
+**Severities:** low, medium, low, medium, low, low, low, low, low  
+**Fix types:** code, code, code, code, code, code, code, code, code  
 **References:** LLM06
 
 ---
@@ -65,7 +75,11 @@ CSDK-007 when the function name is a vague verb like `process`, `handle`, `run`,
 *quality* rather than description *presence* — a tool can pass CSDK-001 (it has
 a docstring) and still give the model nothing usable, either because the text
 is a placeholder stub (CSDK-017) or because it is too short to carry a
-selection signal (CSDK-018).
+selection signal (CSDK-018). CSDK-021 and CSDK-022 are the TypeScript
+counterparts: they apply the same predicates to a TypeScript
+`tool(name, description, schema, handler)` whose description is present, so it
+passes CSDK-014, but is a placeholder (CSDK-021) or under 40 characters
+(CSDK-022).
 
 ---
 
@@ -343,6 +357,74 @@ a real false-positive class this rule cannot distinguish from a genuine stub.
 The guard against double-firing with CSDK-001 (`has_docstring: true`) is exact,
 not probabilistic; the 0.8 reflects the length threshold alone.
 
+### CSDK-021 — TypeScript Claude SDK tool description is a placeholder (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:**
+The same six placeholder markers as CSDK-017 (`has_description_text`: `todo`,
+`tbd`, `fixme`, `placeholder`, `no description`, `does stuff`), on a TypeScript
+Claude Agent SDK tool. The tool sets a description, so it passes CSDK-014; this
+rule looks at what the description says.
+
+**Why it is flaggable:**
+The mechanism is [CSDK-017's](#csdk-017--tool-description-is-a-placeholder-severity-low-confidence-085-fix-type-code). What is TypeScript-specific: the SDK has
+no docstring fallback, so the second argument to
+`tool(name, description, schema, handler)` is the only source of the
+description, and "TODO: describe this tool" tells the model nothing the tool
+name did not. The SDK does not warn, and the Zod schema still validates.
+
+**Real-world consequence:**
+A `tool("lookup", "TODO: describe this tool", schema, handler)` leaves the
+model the name `lookup` and nothing else, so it calls the tool at the wrong
+moment or never reaches for it at all.
+
+**Why severity is low:**
+The pack sets low, the same as CSDK-014 and CSDK-017. The symptom the
+explanation names is mis-selection: a tool called at the wrong moment or not
+called.
+
+**Fix type — code:**
+Replace the placeholder in the `description` argument with a real description
+covering what the tool does, what it returns, and when the model should call it
+rather than a neighboring tool. The SDK passes the string to the model
+verbatim, so write it for the model rather than a human maintainer.
+
+**Confidence 0.85:**
+The pack sets confidence at 0.85 for this rule, the same as CSDK-017. It states
+no known false positives, false negatives, or other limits for CSDK-021.
+
+### CSDK-022 — TypeScript Claude SDK tool description is too short to guide model selection (Severity: low, Confidence: 0.8, Fix type: code)
+
+**What we detect:**
+The same predicates as CSDK-018 (`has_docstring: true` and
+`description_length_lt: 40`, both under `all:`), on a TypeScript Claude Agent
+SDK tool.
+
+**Why it is flaggable:**
+The mechanism is [CSDK-018's](#csdk-018--tool-description-is-too-short-to-guide-model-selection-severity-low-confidence-08-fix-type-code). What is TypeScript-specific: with no
+docstring fallback, a stub like "Gets data." is all the description the tool
+has, so scope and preconditions are left to guesswork. The explanation adds
+that the Zod input schema does not close the gap: it constrains the shape of
+the arguments once the model has decided to call this tool.
+
+**Real-world consequence:**
+A `tool("get_data", "Gets data.", schema, handler)` sits beside a similarly
+named neighbor. Neither description says when to call one rather than the
+other, so the model guesses.
+
+**Why severity is low:**
+The pack sets low, the same as CSDK-018. The cost the explanation names is
+guesswork about scope and preconditions when the model selects a tool.
+
+**Fix type — code:**
+Expand the `description` argument to at least a full sentence covering inputs,
+outputs, and the situation in which this tool should be used over the
+alternatives. Where two tools are easy to confuse, say in each which one the
+other case belongs to.
+
+**Confidence 0.8:**
+The pack sets confidence at 0.8 for this rule, the same as CSDK-018. It states
+no known false positives, false negatives, or other limits for CSDK-022.
+
 ---
 
 ## What this policy does not cover
@@ -365,6 +447,10 @@ not probabilistic; the 0.8 reflects the length threshold alone.
   one; it does not account for tools whose parameter names already carry most
   of the routing signal and can be genuinely self-explanatory at a length
   the rule still flags.
+- For CSDK-021 and CSDK-022: the placeholder rule matches the six listed
+  markers only, so a placeholder worded any other way is not matched, and a
+  description of 40 characters or more passes the length rule whatever it says.
+  The pack states no other limits for either rule.
 
 ---
 
@@ -391,3 +477,22 @@ def fetch_invoice(invoice_id: str, include_lines: bool = False) -> dict:
    constrained `int`) over `str`/`Any` so the model's argument space is small.
 3. Name tools `verb_noun` and keep the verbs distinct across the tool set;
    reserve generic verbs for nothing.
+
+The TypeScript form, where the description is the second argument to `tool(...)`:
+
+```typescript
+import { tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+
+export const fetchInvoice = tool(
+  "fetch_invoice",
+  "Fetch a single invoice by its ID. Use this when the user asks about one specific invoice and gives its ID. Returns the invoice header; set include_lines to true to also return line items. Does not search: use search_invoices for lookups by date or amount.",
+  { invoice_id: z.string(), include_lines: z.boolean().default(false) },
+  async ({ invoice_id, include_lines }) => {
+    // ...
+  },
+);
+```
+
+4. In TypeScript the SDK passes the `description` string to the model verbatim,
+   so write it for the model rather than a human maintainer.
