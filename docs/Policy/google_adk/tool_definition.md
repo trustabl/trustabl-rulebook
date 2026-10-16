@@ -28,6 +28,16 @@ rules:
     confidence: 0.8
     scope: tool
     fix_type: code
+  - id: ADK-018
+    severity: low
+    confidence: 0.85
+    scope: tool
+    fix_type: code
+  - id: ADK-019
+    severity: low
+    confidence: 0.8
+    scope: tool
+    fix_type: code
 references: [LLM06]
 ---
 
@@ -35,9 +45,9 @@ references: [LLM06]
 
 **Policy ID:** `google_adk_tool_definition`  
 **File:** `google_adk/tool_definition.yaml`  
-**Rules:** ADK-001, ADK-002, ADK-007, ADK-009, ADK-013  
-**Severities:** low, medium, low, low, low  
-**Fix types:** code, code, code, code, code  
+**Rules:** ADK-001, ADK-002, ADK-007, ADK-009, ADK-013, ADK-018, ADK-019  
+**Severities:** low, medium, low, low, low, low, low  
+**Fix types:** code, code, code, code, code, code, code  
 **References:** LLM06
 
 > **Read [claude_sdk/tool_definition.md](../claude_sdk/tool_definition.md) for the full threat model.**
@@ -50,7 +60,12 @@ references: [LLM06]
 Google ADK `FunctionTool`-wrapped functions whose model-facing interface is
 underspecified: ADK-001 fires on a missing docstring, ADK-002 on no
 type-annotated parameters, ADK-007 on a vague name. Same predicates and routing
-rationale as the Claude tool-definition policy.
+rationale as the Claude tool-definition policy. ADK-009 fires on a `print` call
+in the tool body, and ADK-013 on a TypeScript `FunctionTool` with no
+`description`. **ADK-018** and **ADK-019** check what a present docstring says:
+ADK-018 fires when it matches one of six listed markers (predicate
+`has_description_text`), and ADK-019 when it is under 40 characters
+(predicates `has_docstring: true` AND `description_length_lt: 40`).
 
 ---
 
@@ -65,6 +80,15 @@ signature and uses the docstring as the description the Gemini model reads.
 The same `description` discipline also governs *agent* delegation in ADK (see
 agent_safety, ADK-101) — so docstring/description hygiene matters at both the tool
 and the agent layer in this SDK.
+
+A docstring can pass ADK-001 and still carry no real content. ADK builds the
+declaration's description from the docstring. The pack's explanation says a
+stub like "TODO: describe this tool" is functionally indistinguishable from no
+docstring at all and the model still has to guess from the function name, and
+that a docstring this short has no room for parameter descriptions, so the
+arguments reach the model undescribed as well. The declaration also carries the
+tool name and the parameter schema. ADK-018 and ADK-019 cover these gaps; both
+rely on this mechanism.
 
 ---
 
@@ -164,6 +188,85 @@ the model sees yet captured as empty here.
 
 ---
 
+### ADK-018 — FunctionTool description is a placeholder (Severity: low, Confidence: 0.85, Fix type: code)
+
+**What we detect:**
+A Python `FunctionTool`-wrapped function whose docstring matches one of six
+listed markers — `todo`, `tbd`, `fixme`, `placeholder`, `no description`,
+`does stuff` — predicate `has_description_text`. The docstring passes ADK-001's
+has-a-docstring check; this rule looks at what it says.
+
+**Why it is flaggable:**
+The mechanism is the one stated
+[above](#why-tool-definition-hygiene-is-a-distinct-concern-in-agent-tools):
+ADK builds the declaration's description from the docstring. The pack's
+explanation says a placeholder leaves the model to guess from the function name,
+as it would with no docstring at all.
+
+**Real-world consequence:**
+A tool whose docstring is "TODO: describe this tool" has that text as its
+declaration description, beside neighboring tools that have real ones. Under an
+ambiguous prompt the model can pick it for the wrong job or pass over it.
+
+**Why severity is low:**
+The pack sets low, the same as ADK-001, and states no reasoning for it. The
+pack's explanation puts a placeholder in the same state as no docstring at all,
+which is the state ADK-001 covers.
+
+**Fix type — code:**
+Replace the placeholder with a real description covering what the tool does,
+what it returns, and when the model should call it rather than a neighboring
+tool. ADK builds the declaration's description from the docstring, so document
+each parameter in the docstring. Both are edits to the wrapped function's
+docstring.
+
+**Confidence 0.85:**
+The pack sets 0.85 for this rule and names no false positives, false
+negatives, or other limits for it.
+
+---
+
+### ADK-019 — FunctionTool description is too short to guide model selection (Severity: low, Confidence: 0.8, Fix type: code)
+
+**What we detect:**
+A Python `FunctionTool`-wrapped function that has a docstring
+(`has_docstring: true`) under 40 characters (`description_length_lt: 40`),
+both under `all:`. Because ADK-001 matches `has_docstring: false`, the two
+rules do not fire on the same function.
+
+**Why it is flaggable:**
+The mechanism is the one stated
+[above](#why-tool-definition-hygiene-is-a-distinct-concern-in-agent-tools).
+The rule treats a docstring under 40 characters as too short to convey what a
+tool does, what it returns, and when to call it rather than a similarly named
+neighbor. The pack's explanation says a stub like "Gets data." leaves scope and
+preconditions to guesswork, and that a docstring this short has no room for
+parameter descriptions, so the arguments reach the model undescribed as well.
+It adds that a `before_tool_callback`, the gate ADK-102 and ADK-107 ask for,
+can block a call it recognizes as wrong but cannot supply the judgment the
+description was meant to provide.
+
+**Real-world consequence:**
+A tool described as "Gets data." sits beside a similarly named neighbor. Under
+an ambiguous prompt the model can pick the wrong one or miss the call.
+
+**Why severity is low:**
+The pack sets low, the same as ADK-001 and ADK-018, and states no reasoning
+for it. The costs the explanation names are scope and preconditions left to
+guesswork, and arguments that reach the model undescribed.
+
+**Fix type — code:**
+Expand the docstring to at least a full sentence covering inputs, outputs, and
+the situation in which this tool should be used over the alternatives. ADK
+builds the declaration's description from the docstring, so document each
+parameter in the docstring.
+
+**Confidence 0.8:**
+The pack sets 0.8 for this rule and names no false positives, false
+negatives, or other limits for it.
+
+---
+
 ## What this policy does not cover
 
 Same gaps as [claude_sdk/tool_definition.md](../claude_sdk/tool_definition.md#what-this-policy-does-not-cover):
@@ -171,6 +274,13 @@ present-but-misleading descriptions, too-loose types, overlapping purposes, and
 descriptions supplied outside the docstring. For ADK-013 specifically: a TypeScript
 `description` assembled from a non-literal expression is real text the model reads,
 but the literal-only capture records it as empty and fires anyway.
+
+Description quality beyond the two checks: ADK-018 matches the six listed
+markers, so a placeholder worded any other way is not matched, and a
+docstring of 40 characters or more passes ADK-019 whatever it says. The pack
+states no other limits for either rule. Both are declared for `language:
+python`; a TypeScript `FunctionTool` is checked by ADK-013's empty-`description`
+rule, not by these two.
 
 ---
 
@@ -181,3 +291,33 @@ distinct verb-noun names — is in
 [claude_sdk/tool_definition.md](../claude_sdk/tool_definition.md#recommendations-beyond-the-fix).
 For ADK, give every `LlmAgent` a clear `description=` too (ADK-101), since the
 same routing logic governs delegation between agents.
+
+A docstring that passes ADK-001, ADK-018 and ADK-019:
+
+```python
+from google.adk.tools import FunctionTool
+
+ORDER_STATUSES: dict[str, str] = {"A-1001": "shipped", "A-1002": "pending"}
+
+
+def get_order_status(order_id: str) -> dict[str, str]:
+    """Look up the fulfillment status of one customer order by its id.
+
+    Call this when the user asks where an order is or whether it has shipped;
+    use the invoice tools for billing questions instead.
+
+    Args:
+        order_id: The order identifier printed on the receipt, e.g. "A-1001".
+
+    Returns:
+        A dict with the "order_id" that was looked up and its "status":
+        "pending", "shipped", "delivered", or "unknown".
+    """
+    return {"order_id": order_id, "status": ORDER_STATUSES.get(order_id, "unknown")}
+
+
+order_status_tool = FunctionTool(get_order_status)
+```
+
+Say in the docstring when the model should call the tool rather than the
+alternatives, and not just what it does, and document each parameter there.

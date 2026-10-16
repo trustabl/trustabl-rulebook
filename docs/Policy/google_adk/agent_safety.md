@@ -58,6 +58,11 @@ rules:
     confidence: 0.75
     scope: agent
     fix_type: config
+  - id: ADK-112
+    severity: medium
+    confidence: 0.85
+    scope: agent
+    fix_type: config
   - id: ADK-113
     severity: low
     confidence: 0.5
@@ -70,16 +75,18 @@ references: [LLM01, LLM03, LLM06, LLM10]
 
 **Policy ID:** `google_adk_agent_safety`  
 **File:** `google_adk/agent_safety.yaml`  
-**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-109, ADK-110, ADK-111, ADK-113  
-**Severities:** medium, high, high, medium, high, high, high, medium, medium, medium, high, low  
-**Fix types:** config, config, config, config, config, config, config, config, config, config, config, code  
+**Rules:** ADK-101, ADK-102, ADK-103, ADK-104, ADK-105, ADK-106, ADK-107, ADK-108, ADK-109, ADK-110, ADK-111, ADK-112, ADK-113  
+**Severities:** medium, high, high, medium, high, high, high, medium, medium, medium, high, medium, low  
+**Fix types:** config, config, config, config, config, config, config, config, config, config, config, config, code  
 **References:** LLM01, LLM03, LLM06, LLM10
 
 ---
 
 ## What this policy covers
 
-How a Google ADK agent is wired: its delegation `description`, its Gemini
+How a Google ADK agent is wired: its delegation `description` (on an
+`LlmAgent` and on the workflow agents `SequentialAgent`, `ParallelAgent`, and
+`LoopAgent`), its Gemini
 `safety_settings`, the interception callbacks that gate tool and model calls, the
 sub-agent/AgentTool delegation graph, loop bounds, and the static allow-list
 (`tool_filter=`) on any `MCPToolset` in its tools list. These fire per agent (scope:
@@ -114,7 +121,8 @@ agent's tool menu is not even authored in this codebase — it is whatever catal
 remote MCP server exposes today, so a server-side update or compromise widens the
 agent's agency with no reviewable code change (the supply-chain edge of this policy,
 LLM03). A `LoopAgent` with no `max_iterations` (ADK-108) can spin unbounded. And a
-missing `description` (ADK-101) breaks delegation routing, the substrate the whole
+missing `description` (ADK-101 on an `LlmAgent`, ADK-109 on a TypeScript one,
+ADK-112 on a workflow agent) breaks delegation routing, the substrate the whole
 graph depends on.
 
 The **untrusted-content / injection** line (OWASP LLM01): web search and page-fetch
@@ -123,7 +131,7 @@ tools (ADK-105/110) pull attacker-controllable content into the loop, and absent
 injected content is neither screened on the way in nor filtered on the way out.
 
 A third, narrower line is **tool-access scoping** (ADK-111), and it sits apart from
-the other nine rules structurally, not just thematically. Every other tool-related
+the other rules structurally, not just thematically. Every other tool-related
 rule in this file (ADK-102/103/105/106/107/110) concerns a *fixed, locally-defined*
 tool — a specific built-in class the agent's source names directly, whose behavior
 is knowable ahead of time and whose only open question is whether a callback gates
@@ -140,8 +148,9 @@ that specific hosted-tool ref — the same predicate family that reads
 `before_tool_callback`/`before_model_callback` presence elsewhere in this file,
 here pointed at a kwarg instead of a callback.
 
-All eleven fixes are *config* — a callback, a kwarg, or a graph restructure on the
-agent constructor, not tool-body code.
+The fixes for all rules except ADK-113 are *config* — a callback, a kwarg, or a
+graph restructure on the agent constructor, not tool-body code. ADK-113's fix
+is *code*, a timeout at the run call site.
 
 ---
 
@@ -311,6 +320,45 @@ for an unfiltered sibling on the same agent.
 
 ---
 
+### ADK-112 — Workflow agent has no description (Severity: medium, Confidence: 0.85, Fix type: config)
+
+**What we detect:** a Python `SequentialAgent`, `ParallelAgent`, or `LoopAgent`
+constructed with no `description=` (`agent_class: [SequentialAgent,
+ParallelAgent, LoopAgent]` AND `agent_kwarg_missing: [description]`). Same
+predicate pair as ADK-101, applied to the three workflow agent classes.
+
+**Why it is flaggable:** ADK routes delegation using the `description=` field on
+each agent in a `sub_agents` tree, and a workflow agent is routed to the same
+way an `LlmAgent` is. A workflow agent with no description sits in the tree but
+gives the parent's model no description to choose it by, and nothing raises an
+error. The pack's explanation says the gap is easier to miss on a workflow
+agent than on an `LlmAgent`: a workflow agent has no `instruction=` or
+`model=` of its own, so the missing description does not look like an
+omission. It adds that what the agent orchestrates is not visible from
+outside; the parent cannot infer "runs these three steps in order" from the
+class name alone.
+
+**Real-world consequence:** a `SequentialAgent` that drafts, reviews, and
+revises a support reply sits in a triage agent's `sub_agents` with no
+description. The triage model sees the agent's name but no description; if the
+name does not say what the branch does, a support ticket can be answered
+elsewhere instead of being handed to it.
+
+**Why medium:** the pack sets medium, the same as ADK-101 and ADK-109, and
+states no reasoning for it. The cost the explanation names is a routing defect, a branch the parent's model has no
+description to choose by, not a direct breach.
+
+**Fix type — config:** add a `description=` kwarg to the workflow agent's
+constructor, naming what the workflow accomplishes and the kind of input it
+expects rather than its mechanics: "drafts, reviews, and revises a support
+reply" tells the parent's model which branch this is, where "sequential agent"
+does not. A constructor change, not tool-body code.
+
+**Confidence 0.85:** the pack sets 0.85 for this rule and names no false
+positives, false negatives, or other limits for it.
+
+---
+
 ### ADK-113 — Runner run call has no wall-clock timeout (Severity: low, Confidence: 0.5, Fix type: code)
 
 **What we detect:** an ADK agent (any of the five `adk_*` agent kinds) that a
@@ -382,6 +430,10 @@ agent, and an `abort_signal` that nothing ever sets satisfies the check.
   `tools=` escapes hosted-tool classification entirely (ADK-111 false negative),
   and the filter check is per agent — one filtered toolset hides an unfiltered
   second one on the same agent.
+- The *quality* of a workflow agent's `description=` (ADK-112): the rule checks
+  that the kwarg is passed, not what it says, so a description that names the
+  mechanics ("sequential agent") rather than the purpose satisfies it. The rule
+  is declared for `language: python`; ADK-109 is the TypeScript `LlmAgent` rule.
 
 ---
 
@@ -410,8 +462,21 @@ agent = LlmAgent(
 )
 ```
 
-1. Give every agent a clear `description` (ADK-101) and Gemini `safety_settings`
-   (ADK-104) as baseline hygiene.
+A workflow agent listed in a parent's `sub_agents` carries its own
+`description=` (ADK-112):
+
+```python
+from google.adk.agents import SequentialAgent
+
+support_reply_pipeline = SequentialAgent(
+    name="support_reply_pipeline",
+    description="Drafts, reviews, and revises a reply to a customer support ticket.",
+    sub_agents=[drafter, reviewer, reviser],  # LlmAgents configured as above
+)
+```
+
+1. Give every agent a clear `description` (ADK-101, ADK-112) and Gemini
+   `safety_settings` (ADK-104) as baseline hygiene.
 2. Add a `before_tool_callback` to any agent holding a shell, search, fetch, or
    AgentTool capability, and a `before_model_callback` to any agent with a
    `code_executor` — and make the callbacks real gates, not stubs.
