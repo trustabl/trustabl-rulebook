@@ -6,10 +6,10 @@ All shipped rules across every SDK. ID prefix denotes the rule family:
 `MCP-` Model Context Protocol, `LC-` LangChain / LangGraph, `CREW-` CrewAI,
 `AG2-` AutoGen / AG2, `VAI-` Vercel AI SDK, `PYD-` Pydantic AI,
 `CSKILL-` Claude Skills, `OBS-` Agent Observability, `RAW-` Raw LLM SDK,
-`AGCFG-` / `MCPCFG-` Agent Configuration. Within a family: `NNN` tool-scope,
-`1NN` agent / subagent scope, `2NN` repo scope. `CSKILL-` rules are all
-skill-scope, and `OBS-`, `RAW-`, `AGCFG-` and `MCPCFG-` rules are all
-repo-scope, so their numbers group by topic instead.
+`AGCFG-` / `MCPCFG-` Agent Configuration, `CI-` CI Workflows. Within a
+family: `NNN` tool-scope, `1NN` agent / subagent scope, `2NN` repo scope.
+`CSKILL-` rules are all skill-scope, and `OBS-`, `RAW-`, `AGCFG-`, `MCPCFG-`
+and `CI-` rules are all repo-scope, so their numbers group by topic instead.
 
 Risk score = `severity_weight × confidence × 100` (engine formula; weights: critical=1.0, high=0.7, medium=0.4, low=0.15, info=0.05). Higher = worse.
 
@@ -57,7 +57,8 @@ Users can contribute their own policies by:
 | Agent Observability    | 0       | 0      | 0        | 7      | 0      | 7       | [observability/POLICY_INDEX.md](observability/POLICY_INDEX.md) |
 | Raw LLM SDK            | 0       | 0      | 0        | 2      | 0      | 2       | [raw_llm_sdk/POLICY_INDEX.md](raw_llm_sdk/POLICY_INDEX.md)     |
 | Agent Configuration    | 0       | 0      | 0        | 5      | 0      | 5       | [agent_config/POLICY_INDEX.md](agent_config/POLICY_INDEX.md)   |
-| **All**                | **197** | **81** | **3**    | **38** | **21** | **340** |                                                                |
+| CI Workflows           | 0       | 0      | 0        | 5      | 0      | 5       | [ci/POLICY_INDEX.md](ci/POLICY_INDEX.md)                       |
+| **All**                | **197** | **81** | **3**    | **43** | **21** | **345** |                                                                |
 
 ## All rules
 
@@ -403,3 +404,8 @@ Users can contribute their own policies by:
 | 338 | AGCFG-005  | Agent Config  | repo     | agent_config                                                                                                                          | Project hooks execute repo-controlled commands                                                     | critical | 0.70       | 70.0 | [agent_config/preauth_execution.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/preauth_execution.yaml)   |
 | 339 | AGCFG-006  | Agent Config  | repo     | agent_config                                                                                                                          | Workspace env file overrides sandbox, proxy, endpoint or trust                                     | critical | 0.80       | 80.0 | [agent_config/preauth_execution.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/preauth_execution.yaml)   |
 | 340 | AGCFG-007  | Agent Config  | repo     | agent_config                                                                                                                          | Editor settings enable agent auto-approve                                                          | high     | 0.85       | 59.5 | [agent_config/preauth_execution.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/preauth_execution.yaml)   |
+| 341 | CI-001     | CI            | repo     | github_actions                                                                                                                        | Agent step runs on an untrusted trigger without an actor gate                                      | critical | 0.70       | 70.0 | [ci/untrusted_triggers.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/untrusted_triggers.yaml)                     |
+| 342 | CI-002     | CI            | repo     | github_actions                                                                                                                        | Ungated agent job holds a write token or extra secrets                                             | critical | 0.75       | 75.0 | [ci/untrusted_triggers.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/untrusted_triggers.yaml)                     |
+| 343 | CI-003     | CI            | repo     | github_actions                                                                                                                        | Checkout persists credentials in an agent job                                                      | high     | 0.70       | 49.0 | [ci/agent_hardening.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/agent_hardening.yaml)                           |
+| 344 | CI-004     | CI            | repo     | github_actions                                                                                                                        | Agent step grants unrestricted shell                                                               | high     | 0.80       | 56.0 | [ci/agent_hardening.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/agent_hardening.yaml)                           |
+| 345 | CI-005     | CI            | repo     | github_actions                                                                                                                        | Agent job with shell or web access has no egress restriction                                       | medium   | 0.50       | 20.0 | [ci/agent_hardening.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/agent_hardening.yaml)                           |
