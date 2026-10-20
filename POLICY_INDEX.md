@@ -56,8 +56,8 @@ Users can contribute their own policies by:
 | Claude Skills          | 0       | 0      | 0        | 0      | 21     | 21      | [claude_skill/POLICY_INDEX.md](claude_skill/POLICY_INDEX.md)   |
 | Agent Observability    | 0       | 0      | 0        | 7      | 0      | 7       | [observability/POLICY_INDEX.md](observability/POLICY_INDEX.md) |
 | Raw LLM SDK            | 0       | 0      | 0        | 2      | 0      | 2       | [raw_llm_sdk/POLICY_INDEX.md](raw_llm_sdk/POLICY_INDEX.md)     |
-| Agent Configuration    | 0       | 0      | 0        | 5      | 0      | 5       | [agent_config/POLICY_INDEX.md](agent_config/POLICY_INDEX.md)   |
-| **All**                | **197** | **81** | **3**    | **38** | **21** | **340** |                                                                |
+| Agent Configuration    | 0       | 0      | 0        | 6      | 0      | 6       | [agent_config/POLICY_INDEX.md](agent_config/POLICY_INDEX.md)   |
+| **All**                | **197** | **81** | **3**    | **39** | **21** | **341** |                                                                |
 
 ## All rules
 
@@ -403,3 +403,4 @@ Users can contribute their own policies by:
 | 338 | AGCFG-005  | Agent Config  | repo     | agent_config                                                                                                                          | Project hooks execute repo-controlled commands                                                     | critical | 0.70       | 70.0 | [agent_config/preauth_execution.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/preauth_execution.yaml)   |
 | 339 | AGCFG-006  | Agent Config  | repo     | agent_config                                                                                                                          | Workspace env file overrides sandbox, proxy, endpoint or trust                                     | critical | 0.80       | 80.0 | [agent_config/preauth_execution.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/preauth_execution.yaml)   |
 | 340 | AGCFG-007  | Agent Config  | repo     | agent_config                                                                                                                          | Editor settings enable agent auto-approve                                                          | high     | 0.85       | 59.5 | [agent_config/preauth_execution.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/preauth_execution.yaml)   |
+| 341 | AGCFG-008  | Agent Config  | repo     | agent_config                                                                                                                          | Codex project hook runs a repo-controlled command once trusted                                     | medium   | 0.55       | 22.0 | [agent_config/codex_hooks.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/codex_hooks.yaml)               |
