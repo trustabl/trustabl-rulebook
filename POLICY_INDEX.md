@@ -56,8 +56,8 @@ Users can contribute their own policies by:
 | Claude Skills          | 0       | 0      | 0        | 0      | 21     | 21      | [claude_skill/POLICY_INDEX.md](claude_skill/POLICY_INDEX.md)   |
 | Agent Observability    | 0       | 0      | 0        | 7      | 0      | 7       | [observability/POLICY_INDEX.md](observability/POLICY_INDEX.md) |
 | Raw LLM SDK            | 0       | 0      | 0        | 2      | 0      | 2       | [raw_llm_sdk/POLICY_INDEX.md](raw_llm_sdk/POLICY_INDEX.md)     |
-| Agent Configuration    | 0       | 0      | 0        | 8      | 0      | 8       | [agent_config/POLICY_INDEX.md](agent_config/POLICY_INDEX.md)   |
-| **All**                | **197** | **81** | **3**    | **41** | **21** | **343** |                                                                |
+| Agent Configuration    | 0       | 0      | 0        | 9      | 0      | 9       | [agent_config/POLICY_INDEX.md](agent_config/POLICY_INDEX.md)   |
+| **All**                | **197** | **81** | **3**    | **42** | **21** | **344** |                                                                |
 
 ## All rules
 
@@ -406,3 +406,4 @@ Users can contribute their own policies by:
 | 341 | AGCFG-008  | Agent Config  | repo     | agent_config                                                                                                                          | Codex project hook runs a repo-controlled command once trusted                                     | medium   | 0.55       | 22.0 | [agent_config/codex_hooks.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/codex_hooks.yaml)               |
 | 342 | AGCFG-009  | Agent Config  | repo     | agent_config                                                                                                                          | AGENTS.md contains invisible or direction-overriding text                                          | medium   | 0.60       | 24.0 | [agent_config/agents_md.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/agents_md.yaml)                   |
 | 343 | AGCFG-010  | Agent Config  | repo     | agent_config                                                                                                                          | Harness guidance file contains invisible or direction-overriding text                              | medium   | 0.60       | 24.0 | [agent_config/harness_guidance.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/harness_guidance.yaml)     |
+| 344 | AGCFG-011  | Agent Config  | repo     | agent_config                                                                                                                          | Project settings pre-approve fetches from hosts that serve user-published content                  | high     | 0.70       | 49.0 | [agent_config/fetch_permissions.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_config/fetch_permissions.yaml)   |
