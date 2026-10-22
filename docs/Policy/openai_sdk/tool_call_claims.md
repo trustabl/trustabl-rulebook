@@ -4,7 +4,7 @@ category: openai_sdk
 topic: tool_call_claims
 rules:
   - id: OAI-034
-    severity: low
+    severity: info
     confidence: 0.5
     scope: tool
     fix_type: code
@@ -26,7 +26,7 @@ references: [LLM01, LLM06]
 **Policy ID:** `openai_sdk_tool_call_claims`
 **File:** `openai_sdk/tool_call_claims.yaml`
 **Rules:** OAI-034, OAI-035, OAI-036
-**Severities:** low, medium, medium
+**Severities:** info, medium, medium
 **Fix types:** code, code, code
 **References:** OWASP LLM Top 10:2025 — LLM01 (Prompt Injection), LLM06 (Excessive Agency)
 
@@ -91,7 +91,7 @@ resistance.
 
 ## Rule-by-rule defense
 
-### OAI-034 — Side-effecting tool takes no structured claim for its calls (Severity: low, Confidence: 0.5, Fix type: code)
+### OAI-034 — Side-effecting tool takes no structured claim for its calls (Severity: info, Confidence: 0.5, Fix type: code)
 
 **What we detect:**
 `tool_claim_use: [absent]` — the tool's parameter list (`ToolDef.ParamNames`)
@@ -113,11 +113,17 @@ them can tell whether this call is the one the task called for.
   misreading a summary; nothing states an expected effect (`max_items`) that
   the call could be held to.
 
-**Why severity is low and not medium:**
+**Why severity is info and not low:**
 The finding is a missing defense-in-depth layer, not a defect: the tool may be
 well protected by other means, and EBTE itself is additive to existing controls.
-It is low so that it informs without outranking concrete defects such as an
-unbounded recipient (side-effect bounds) or an unsandboxed shell.
+The claim pattern comes from a single recent preprint and has no adoption yet,
+so this rule would fire on most repositories with side-effecting tools. At info
+it still shows up in every report with its fix, but it never fails a
+`--strict` run, and its scoring weight (0.05) is a third of low's. That way it
+never outranks concrete defects such as an unbounded recipient (side-effect
+bounds) or an unsandboxed shell. The two rules for a claim that is declared
+but never checked stay medium, because they fire only on code that adopted
+claims and gives false assurance.
 
 **Fix type — code:**
 The tool signature and a mediation step change in source; there is no
