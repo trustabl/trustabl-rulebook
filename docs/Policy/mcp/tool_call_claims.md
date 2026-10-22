@@ -214,10 +214,9 @@ does a claim sent to an HTTP endpoint that merely stores it.
 
 - **Other languages and SDKs.** Only Python tool discovery classifies
   `claim_use`, and claim rules exist for the OpenAI Agents SDK, MCP, LangChain,
-  CrewAI and Pydantic AI. TypeScript tools, Claude Agent SDK tools (whose Python
-  handler takes a single `args` dict), Google ADK (whose mediation point is the
-  agent's `before_tool_callback`, an agent-scope fact), AutoGen and Vercel AI
-  have no rules yet.
+  CrewAI, Pydantic AI and the Claude Agent SDK. TypeScript tools, Google ADK
+  (whose mediation point is the agent's `before_tool_callback`, an agent-scope
+  fact), AutoGen and Vercel AI have no rules yet.
 - **Checks that are not checks.** A claim passed to any call that is not an
   output call is "checked" — including a stub `verify_claim` that returns
   `"allow"` unconditionally, or a comparison whose result is ignored. The rule
