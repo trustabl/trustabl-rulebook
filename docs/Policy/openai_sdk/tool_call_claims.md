@@ -18,6 +18,21 @@ rules:
     confidence: 0.55
     scope: tool
     fix_type: code
+  - id: OAI-037
+    severity: info
+    confidence: 0.5
+    scope: tool
+    fix_type: code
+  - id: OAI-038
+    severity: medium
+    confidence: 0.6
+    scope: tool
+    fix_type: code
+  - id: OAI-039
+    severity: medium
+    confidence: 0.55
+    scope: tool
+    fix_type: code
 references: [LLM01, LLM06]
 ---
 
@@ -25,16 +40,17 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `openai_sdk_tool_call_claims`
 **File:** `openai_sdk/tool_call_claims.yaml`
-**Rules:** OAI-034, OAI-035, OAI-036
-**Severities:** info, medium, medium
-**Fix types:** code, code, code
+**Rules:** OAI-034, OAI-035, OAI-036, OAI-037, OAI-038, OAI-039
+**Severities:** info, medium, medium, info, medium, medium
+**Fix types:** code, code, code, code, code, code
 **References:** OWASP LLM Top 10:2025 — LLM01 (Prompt Injection), LLM06 (Excessive Agency)
 
 ---
 
 ## What this policy covers
 
-A Python `@function_tool` function and how it uses a reserved `claim` argument: a typed
+A Python `@function_tool` function (OAI-034..036) or a TypeScript `tool({...})`
+definition (OAI-037..039, the same ladder) and how it uses a reserved `claim` argument: a typed
 `ToolInvocationExplanation` the model fills in with each call (schema version,
 intent class, selected tool, expected effect, risk tier, uncertainty,
 untrusted-context dependencies, evidence digests). The three rules are a
@@ -208,13 +224,87 @@ returning a verdict) is misread as output (false positive). A claim copied first
 (`c = claim`) counts as checked even if `c` is only printed (false negative), as
 does a claim sent to an HTTP endpoint that merely stores it.
 
+### OAI-037 — Side-effecting tool takes no structured claim for its calls (TypeScript) (Severity: info, Confidence: 0.5, Fix type: code)
+
+**What we detect:**
+The TypeScript sibling of OAI-034, on a `tool({...})` definition from
+`@openai/agents`: `tool_claim_use: [absent]` — the tool's `parameters` schema
+(a zod `z.object({...})` or an object literal) has no `claim` key — combined with
+the same side-effect signal, where the shell, code-execution and file-write
+signals come from the inline `execute` function. Applies to `openai_tool` in
+TypeScript.
+
+**Why it is flaggable, severity and confidence:** as for OAI-034. Tool names in
+TypeScript are often camelCase; the name prefixes still match (`sendEmail`
+starts with `send`), but the underscore forms (`post_`, `pay_`) do not.
+
+### OAI-038 — Tool declares a claim argument that nothing checks (TypeScript) (Severity: medium, Confidence: 0.6, Fix type: code)
+
+**What we detect:**
+`tool_claim_use: [unused]` — the `parameters` schema has a `claim` key, the
+tool has no `inputGuardrails`, and the inline `execute` function never reads the
+claim. The input is `execute`'s first parameter: when it is destructured, the
+claim is the local name bound to the `claim` key (`({ claim })`, or
+`({ claim: c })`, which binds `c`); when it is an identifier (`input`), the claim
+is `input.claim` or `input["claim"]`, and any other use of `input` counts as a
+read. An `execute` that is a reference to a function defined elsewhere gets no
+fact, so the rule is silent for it. Applies to `openai_tool` in TypeScript.
+
+**Why it is flaggable, severity and confidence:** as for OAI-035. The JS SDK's
+tool input guardrail (`inputGuardrails: [defineToolInputGuardrail({...})]` on
+the tool) runs before `execute` with the call's arguments and can reject the
+call, so an attached one counts as a possible mediator, whatever it checks.
+
+### OAI-039 — Tool's claim argument is only written out or returned, never checked (TypeScript) (Severity: medium, Confidence: 0.55, Fix type: code)
+
+**What we detect:**
+`tool_claim_use: [passthrough]` — every claim read in `execute` ends in an
+output call — any `console.*` method, `JSON.stringify`, `String`, or a method
+named `debug`, `info`, `warn`, `warning`, `error`, `log` or `trace` — or in a
+returned value (a `return` statement, or an arrow function's expression body).
+A read that is an argument to any other call, or reaches a condition,
+declaration, assignment or `throw`, counts as checked. Applies to `openai_tool`
+in TypeScript.
+
+**Why it is flaggable, severity and confidence:** as for OAI-036.
+
+**Example (TypeScript):**
+
+```ts
+import { defineToolInputGuardrail, tool, ToolGuardrailFunctionOutputFactory } from "@openai/agents";
+import { z } from "zod";
+
+const checkClaim = defineToolInputGuardrail({
+  name: "check_claim",
+  run: async ({ toolCall }) => {
+    const args = JSON.parse(toolCall.arguments);
+    const outcome = mediate(args.claim, "send_email", args); // server-held facts
+    if (outcome !== "allow") {
+      // Coarse reason only; per-check detail goes to the audit trail.
+      return ToolGuardrailFunctionOutputFactory.rejectContent("claim does not match route");
+    }
+    return ToolGuardrailFunctionOutputFactory.allow();
+  },
+});
+
+export const sendEmail = tool({
+  name: "send_email",
+  description: "Send an email to a customer on the authorized route.",
+  parameters: z.object({ to: z.string(), subject: z.string(), body: z.string(), claim: ToolInvocationExplanation }),
+  inputGuardrails: [checkClaim],
+  needsApproval: async (_ctx, args) => serverRisk("send_email") === "high",
+  execute: async ({ to, subject, body }) => mailer.send({ to, subject, body }),
+});
+```
+
 ---
 
 ## What this policy does not cover
 
-- **Other languages and SDKs.** Only Python tool discovery classifies
-  `claim_use`, and claim rules exist for the OpenAI Agents SDK, MCP, LangChain,
-  CrewAI, Pydantic AI and the Claude Agent SDK. TypeScript tools, Google ADK
+- **Other languages and SDKs.** Python tool discovery, and TypeScript OpenAI
+  Agents discovery, classify `claim_use`; claim rules exist for the OpenAI Agents SDK, MCP, LangChain,
+  CrewAI, Pydantic AI and the Claude Agent SDK, plus TypeScript OpenAI Agents
+  `tool({...})` definitions. Other TypeScript tools, Google ADK
   (whose mediation point is the agent's `before_tool_callback`, an agent-scope
   fact), AutoGen and Vercel AI have no rules yet.
 - **Checks that are not checks.** A claim passed to any call that is not an
