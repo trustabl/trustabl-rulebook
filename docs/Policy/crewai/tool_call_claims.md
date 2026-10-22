@@ -213,11 +213,10 @@ does a claim sent to an HTTP endpoint that merely stores it.
 ## What this policy does not cover
 
 - **Other languages and SDKs.** Python tool discovery, and TypeScript OpenAI
-  Agents discovery, classify `claim_use`; claim rules exist for the OpenAI Agents SDK, MCP, LangChain,
-  CrewAI, Pydantic AI and the Claude Agent SDK, plus TypeScript OpenAI Agents
-  `tool({...})` definitions. Other TypeScript tools, Google ADK
-  (whose mediation point is the agent's `before_tool_callback`, an agent-scope
-  fact), AutoGen and Vercel AI have no rules yet.
+  Agents discovery, classify `claim_use`; claim rules exist for the OpenAI
+  Agents SDK (Python and TypeScript), MCP, LangChain, CrewAI, Pydantic AI, the
+  Claude Agent SDK, Google ADK and AutoGen. Other TypeScript tools, including
+  Vercel AI, have no rules yet.
 - **Other tool shapes.** Only `@tool`-decorated functions get the `claim_use`
   fact. A `BaseTool` subclass (a `_run` method) is not discovered as a tool by
   this path, so CREW-016..018 do not see it.
