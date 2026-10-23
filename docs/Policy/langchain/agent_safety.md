@@ -38,6 +38,11 @@ rules:
     confidence: 0.6
     scope: agent
     fix_type: code
+  - id: LC-117
+    severity: high
+    confidence: 0.7
+    scope: agent
+    fix_type: code
 references: [LLM01, LLM02, LLM06, LLM10]
 ---
 
@@ -45,9 +50,9 @@ references: [LLM01, LLM02, LLM06, LLM10]
 
 **Policy ID:** `langchain_agent_safety`
 **File:** `langchain/agent_safety.yaml`
-**Rules:** LC-101, LC-102, LC-103, LC-111, LC-113, LC-114, LC-116
-**Severities:** high, low, medium, low, low, medium, high
-**Fix types:** code, config, code, config, config, code, code
+**Rules:** LC-101, LC-102, LC-103, LC-111, LC-113, LC-114, LC-116, LC-117
+**Severities:** high, low, medium, low, low, medium, high, high
+**Fix types:** code, config, code, config, config, code, code, code
 **References:** LLM01 (Prompt Injection), LLM02 (Sensitive Information Disclosure), LLM06 (Excessive Agency), LLM10 (Unbounded Consumption)
 
 ---
@@ -62,7 +67,10 @@ raw HTTP `Requests*` built-in whose destination the model chooses (LC-103), and 
 tool-calling loop with no explicit iteration cap (LC-102 / LC-111). LC-116 flags a
 LangGraph graph or agent whose checkpointer is in-memory (`MemorySaver` /
 `InMemorySaver`) while it is run from a server entrypoint, so its threads do not
-survive a restart, a deploy, or a second worker.
+survive a restart, a deploy, or a second worker. LC-117 narrows LC-101 to LangChain
+v1 `create_agent`: when that agent wires one of the same code-execution or shell
+built-ins, it checks that the two pieces a human-approval pause needs are present,
+a non-empty `middleware=` list and a `checkpointer=`.
 
 The raw `StateGraph` graph is in scope too: LC-101 and LC-103 apply to its tool set,
 and LC-114 and LC-116 check how it is checkpointed.
@@ -338,11 +346,95 @@ reached from a server entrypoint is LC-116 (high). An in-memory checkpointer tha
 server entrypoint reaches draws neither. Both stay silent when the repo ships a
 `langgraph.json`.
 
+### LC-117 — LangChain privileged create_agent lacks human-approval prerequisites (Severity: high, Confidence: 0.7, Fix type: code)
+
+**What we detect:** a Python LangChain v1 `create_agent(...)` agent (normalized class
+`CreateAgent`, predicate `agent_class`) that meets both conditions:
+- `agent_uses_hosted_tool_class` — its resolved tool set includes `PythonREPLTool`,
+  `PythonAstREPLTool`, or `ShellTool`, the same closed list as LC-101;
+- at least one of:
+  - `agent_kwarg_list_empty: [middleware]` — `middleware=` is absent or an empty list
+    literal `[]`;
+  - `agent_kwarg_missing: [checkpointer]` — `checkpointer=` is absent or explicitly
+    `None`.
+
+The rule never applies to `create_react_agent`, `AgentExecutor`, a raw `StateGraph`,
+or LangChain.js.
+
+**Why it is flaggable:** in LangChain v1, a human-approval pause before a tool runs
+comes from middleware. `HumanInTheLoopMiddleware(interrupt_on={...})` stops the run
+before the named tool executes and raises an interrupt that the caller resumes with
+a decision. That pause depends on two parts of the constructor. The middleware list
+must exist for anything to intercept the tool call. A checkpointer must exist for
+the paused run to be saved somewhere and resumed later: an interrupt with no saved
+state has nothing to come back to. An agent that can run model-chosen Python or
+shell commands and has neither part has no point where a person can approve a call
+before it runs (LLM06, Excessive Agency). Each call goes straight from the model's
+decision to execution.
+
+**Real-world consequence:**
+- A DevOps assistant built with `create_agent(model, tools=[ShellTool()])` is asked
+  to "clean up disk space on the build host". The model picks `rm -rf` on a path it
+  inferred from a log line, and nothing pauses the call for an operator to read
+  first.
+- A data agent with a `PythonREPLTool` summarizes a CSV that a user uploaded. A cell
+  in the file contains instructions to `import os` and print the environment. The
+  model follows them (LLM01), and the deployment's API keys land in the model's
+  reply (LLM02). With an approval pause in place, the reviewer would have seen
+  `os.environ` in the pending call.
+- A team adds `HumanInTheLoopMiddleware` but no checkpointer. The interrupt cannot
+  persist, the approval step fails at runtime, and the middleware gets removed to
+  make the agent work again. LC-117 fires on both versions of that agent.
+
+**Why severity is high and not medium:** the agent already holds an arbitrary
+execution capability, and LC-117 adds that nothing in the agent's structure can
+stop a call before it runs. It matches LC-101's high and does not go above it.
+The harm comes from the same REPL or shell tool; the missing approval point only
+removes the mitigation a reviewer would look for first. It is not critical for the
+same reason LC-101 is not: the engine reserves that tier, and the harm still needs
+the model to be steered to the tool, by a confused plan or by injected input.
+
+**Fix type — code:** the fix is more than adding a constructor kwarg. The
+middleware has to name the privileged tool in `interrupt_on`, the agent needs a
+durable checkpointer, and the calling code has to pass a `thread_id`, detect the
+interrupt, collect a decision, and resume the run with
+`Command(resume={"decisions": [...]})`. That approval loop is application code.
+
+**Confidence 0.7:** the rule checks that the structure exists, not what it does.
+- *False positives:*
+  - `create_agent(**cfg)`, where the middleware and checkpointer are inside the
+    unpacked dict, which the predicates cannot see;
+  - an agent deployed on LangGraph Platform, which supplies its own checkpointer.
+    LC-117 has no `langgraph.json` exemption, unlike LC-114 and LC-116;
+  - a REPL that is already sandboxed and gated out of band, the same gap as LC-101.
+- *False negatives:*
+  - any non-empty middleware list satisfies the first condition, including one with
+    only `SummarizationMiddleware` or another middleware that never pauses;
+  - `middleware=None` is not treated as empty, so it passes;
+  - a middleware list passed as a variable (`middleware=MIDDLEWARE`) passes, because
+    the predicate cannot read its contents;
+  - an `interrupt_on` that names a different tool from the REPL or shell passes;
+  - a throwaway `MemorySaver()` in production satisfies the checkpointer condition.
+    LC-116 catches that case only when a server entrypoint reaches the agent.
+
+The confidence sits below LC-101's 0.85 because LC-117 adds an inference from
+missing kwargs to a missing approval point. That inference fails for the
+unpacked-config and Platform cases above, which LC-101 does not depend on.
+
+**Relationship to LC-101:** every agent that fires LC-117 also fires LC-101, because
+both match the same tool classes and LC-117 only adds conditions. The two findings
+say different things. LC-101 says the agent can execute arbitrary code; LC-117 says
+nothing is in place to pause it when it does. Adding the middleware and a
+checkpointer clears LC-117 only. LC-101 stays until the built-in is removed or
+sandboxed, because an approval pause reduces the risk but does not remove the
+capability.
+
 ---
 
 ## What this policy does not cover
 
-v1 `create_agent` middleware quality and whether a code-execution tool is *actually*
+v1 `create_agent` middleware quality (LC-117 checks only that a middleware list
+and a checkpointer are present) and whether a code-execution tool is *actually*
 sandboxed out of band. The iteration rules check `AgentExecutor` only —
 `create_react_agent` / `create_agent` enforce their own recursion limit differently
 and are out of scope here.
@@ -364,6 +456,15 @@ and are out of scope here.
 - For LC-116: a graph reached through more than one helper hop, built or compiled
   inside a factory function, or given a saver chosen at runtime is not seen, and
   recall on real server code is unmeasured.
+- For LC-117: only Python `create_agent`. It does not check which tools
+  `interrupt_on` names, whether any middleware in the list actually pauses, whether
+  the checkpointer is durable, or whether the calling code ever resumes an
+  interrupt. `middleware=None`, a middleware list held in a variable, and
+  `create_agent(**cfg)` are not resolved. The first two pass silently; the third
+  fires. There is no LangGraph Platform exemption, and `create_react_agent`,
+  `AgentExecutor`, `StateGraph` with a REPL node, and LangChain.js `createAgent` are
+  out of scope. A custom `@tool` that shells out is not one of the three built-in
+  classes, so it is not seen.
 
 ---
 
@@ -376,6 +477,60 @@ serves requests needs a durable checkpointer for that pause to survive a restart
 (LC-114, LC-116). Set `max_iterations` / `maxIterations` (and a `max_execution_time`)
 sized to the task, and set `handle_parsing_errors` so a malformed model step surfaces
 rather than retrying forever.
+
+When a `create_agent` agent must keep a shell or REPL tool (LC-117), pause that tool
+for approval and save the paused run in a durable checkpointer:
+
+```python
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware
+from langchain_community.tools import ShellTool
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.types import Command
+
+
+def run_with_approval(db_uri: str, thread_id: str, request: str, review) -> dict:
+    """Run a shell-capable agent; every shell call waits for a reviewer's decision."""
+    shell = ShellTool()
+    with PostgresSaver.from_conn_string(db_uri) as checkpointer:
+        checkpointer.setup()  # creates the checkpoint tables on first use
+        agent = create_agent(
+            model="anthropic:claude-sonnet-5-5",
+            tools=[shell],
+            middleware=[
+                HumanInTheLoopMiddleware(
+                    # Key by the tool's own name, so a renamed tool cannot slip past.
+                    interrupt_on={shell.name: {"allowed_decisions": ["approve", "reject"]}},
+                ),
+            ],
+            checkpointer=checkpointer,
+        )
+        config = {"configurable": {"thread_id": thread_id}}
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": request}]},
+            config=config,
+            version="v2",
+        )
+        while result.interrupts:
+            # review() shows the pending tool calls to a person and returns one decision
+            # per call, in order: {"type": "approve"} or {"type": "reject", "message": "..."}.
+            decisions = review([interrupt.value for interrupt in result.interrupts])
+            result = agent.invoke(
+                Command(resume={"decisions": decisions}),
+                config=config,  # same thread_id, so the paused run resumes
+                version="v2",
+            )
+        return result.value
+```
+
+1. Name every privileged tool in `interrupt_on` by its `name` attribute, and add a
+   test that fails when a tool on the agent is privileged but not listed.
+2. Use `MemorySaver` / `InMemorySaver` only in tests. A paused run in an in-memory
+   saver is lost on restart (LC-116).
+3. Log each decision with the `thread_id`, the reviewer, and the exact pending
+   arguments, so an approved command can be audited later.
+4. Keep the shell or REPL inside a container or sandbox anyway. Approval reduces the
+   risk of a bad call; it does not limit what an approved call can do (LC-101).
 
 For outbound HTTP, prefer a purpose-built tool that pins the base URL and takes only a
 path or query from the model over a generic `Requests*` built-in. Where open fetching is
