@@ -23,6 +23,16 @@ rules:
     confidence: 0.65
     scope: agent
     fix_type: config
+  - id: OAI-118
+    severity: high
+    confidence: 0.75
+    scope: agent
+    fix_type: config
+  - id: OAI-119
+    severity: high
+    confidence: 0.75
+    scope: agent
+    fix_type: config
 references: [LLM01, LLM06]
 ---
 
@@ -30,16 +40,16 @@ references: [LLM01, LLM06]
 
 **Policy ID:** `openai_sdk_mcp_safety`  
 **File:** `openai_sdk/mcp_safety.yaml`  
-**Rules:** OAI-106, OAI-115, OAI-116, OAI-117  
-**Severities:** high, high, high, medium  
-**Fix types:** config, config, config, config
+**Rules:** OAI-106, OAI-115, OAI-116, OAI-117, OAI-118, OAI-119  
+**Severities:** high, high, high, medium, high, high  
+**Fix types:** config, config, config, config, config, config  
 **References:** LLM01, LLM06
 
 ---
 
 ## What this policy covers
 
-Two related but distinct gaps in how an OpenAI Agents SDK agent wires MCP:
+Related but distinct gaps in how an OpenAI Agents SDK agent wires MCP:
 
 - **OAI-106** — agents that import tools from one or more MCP servers via
   `mcp_servers=` (present and non-empty — an empty `mcp_servers=[]` wires
@@ -70,6 +80,15 @@ Two related but distinct gaps in how an OpenAI Agents SDK agent wires MCP:
   deliberately not combined with OAI-116's `allowedTools` check: an agent can
   set one control correctly and still be missing the other, so the two fire
   independently and can both land on the same `hostedMcpTool(...)` call.
+- **OAI-118** — Python agents that wire an MCP server (`MCPServerStdio`,
+  `MCPServerSse`, or `MCPServerStreamableHttp`) with no `tool_filter`. The
+  match is `agent_mcp_server_kwarg_missing: {classes: [MCPServerStdio,
+  MCPServerSse, MCPServerStreamableHttp], kwarg: tool_filter}`.
+- **OAI-119** — the TypeScript sibling of OAI-118: agents that wire an
+  `MCPServerStdio`, `MCPServerSSE`, or `MCPServerStreamableHttp` with no
+  `toolFilter`. Same predicate, with the TypeScript class names and kwarg
+  `toolFilter`. The SSE class is spelled `MCPServerSSE` here and
+  `MCPServerSse` in the Python rule.
 
 OAI-115 and OAI-116 cover the hosted path, where the MCP server is not run by
 the agent process at all. The Python `HostedMCPTool(tool_config={...})` and the
@@ -80,6 +99,11 @@ when the Python `tool_config` dict sets no `allowed_tools` (match
 `agent_hosted_tool_kwarg_present` for `tool_config.allowed_tools`); OAI-116
 fires when the TypeScript options set no `allowedTools`. The allow-list is the
 only static narrowing of that catalog, so its absence is the finding.
+
+OAI-118 and OAI-119 cover the directly connected path, where the agent wires
+the MCP server itself. The filter on that path is `tool_filter` in Python and
+`toolFilter` in TypeScript, set on the server's constructor; the two rules fire
+when it is missing.
 
 ---
 
@@ -125,6 +149,19 @@ and a flat options shape — OAI-116 is its dedicated rule, per this repo's
 SDK-scoped-rules discipline (a Python `HostedMCPTool` rule and a TS
 `hostedMcpTool` rule stay two rules, never one `applies_to` widened across
 both).
+
+The directly connected path has the same catalog problem. Unlike an explicit
+`tools=[...]` list, an MCP server wired into the agent connects it to every
+tool that server currently exposes: a surface that is not enumerable from the
+agent's source and can grow or change behavior whenever the server is updated.
+Where the server is not this codebase's own, it also sits on the far side of a
+trust boundary this codebase does not control. The SDK narrows that catalog to
+a named allow-list with `tool_filter` in Python (via
+`create_static_tool_filter` or a callable) and `toolFilter` in TypeScript (via
+`createMCPToolStaticFilter` or a callable). With no filter (`None`, the Python
+default, or unset in TypeScript) no filtering occurs at all, so a poisoned or
+newly added tool description reaches the model unfiltered. OAI-118 is the
+Python rule and OAI-119 the TypeScript one.
 
 ---
 
@@ -346,6 +383,68 @@ spread or a variable rather than an object literal is not captured; and a
 resolves onto `AgentDef.ToolRefs`, not `HostedToolRefs`, so a hoisted binding
 escapes this rule entirely, same as OAI-116.
 
+### OAI-118 — Agent wires an MCP server with no tool_filter allow-list (Severity: high, Confidence: 0.75, Fix type: config)
+
+**What we detect:** a Python agent (`Agent` or `SandboxAgent`) that wires an
+`MCPServerStdio`, `MCPServerSse`, or `MCPServerStreamableHttp` with no
+`tool_filter` keyword (predicate `agent_mcp_server_kwarg_missing` with those
+three classes and kwarg `tool_filter`).
+
+**Why it is flaggable:** the mechanism is the one stated
+[above](#why-mcp-integration-is-a-distinct-concern-in-agent-tools). The pack's
+explanation says an MCP server connects the agent to every tool that server
+currently exposes, a surface that is not enumerable from the agent's source,
+and that when `tool_filter` is `None` (the default) no filtering occurs at all.
+
+**Real-world consequence:** the explanation says a poisoned or newly added
+tool description reaches the model unfiltered. It also says the surface can
+grow or change behavior whenever the server is updated, so a tool added that
+way reaches the agent with no change in the agent's repo.
+
+**Why severity is high:** the pack sets high and states no reasoning for it.
+The costs the explanation names are a catalog that is not enumerable from the
+agent's source, that can change whenever the server is updated, and whose
+poisoned or newly added tool descriptions reach the model unfiltered.
+
+**Fix type — config:** pass
+`tool_filter=create_static_tool_filter(allowed_tool_names=[...])` to the MCP
+server constructor, naming the specific tool names this agent is allowed to
+call. It is an argument on the agent's MCP wiring, not a change to any tool's
+code. Re-review the filter whenever the agent's task changes, and treat any
+server tool not in the list as excluded by default.
+
+**Confidence 0.75:** the pack sets 0.75 for this rule and names no
+false-positive or false-negative scenarios for it.
+
+### OAI-119 — TypeScript agent wires an MCP server with no toolFilter allow-list (Severity: high, Confidence: 0.75, Fix type: config)
+
+**What we detect:** a TypeScript OpenAI Agents SDK agent that wires an
+`MCPServerStdio`, `MCPServerSSE`, or `MCPServerStreamableHttp` with no
+`toolFilter` option (predicate `agent_mcp_server_kwarg_missing` with those
+three classes and kwarg `toolFilter`).
+
+**Why it is flaggable:** the mechanism is the one stated
+[above](#why-mcp-integration-is-a-distinct-concern-in-agent-tools), under the
+TypeScript names: `toolFilter` (via `createMCPToolStaticFilter` or a callable)
+narrows the catalog to a named allow-list, and when it is unset no filtering
+occurs at all.
+
+**Real-world consequence:** the same as OAI-118. The explanation says a
+poisoned or newly added tool description reaches the model unfiltered, and that
+the surface can grow or change behavior whenever the server is updated.
+
+**Why severity is high:** the pack sets high and states no reasoning for it.
+The costs the explanation names are the same as for OAI-118.
+
+**Fix type — config:** pass `toolFilter: createMCPToolStaticFilter({ allowed:
+[...] })` to the MCP server constructor, naming the specific tool names this
+agent is allowed to call. It is an option on the agent's MCP wiring, not a
+change to any tool's code. Re-review the filter whenever the agent's task
+changes, and treat any server tool not in the list as excluded by default.
+
+**Confidence 0.75:** the pack sets 0.75 for this rule and names no
+false-positive or false-negative scenarios for it.
+
 ---
 
 ### OAI-115: Agent wires a HostedMCPTool with no allowed_tools allow-list (Severity: high, Confidence: 0.7, Fix type: config)
@@ -435,7 +534,7 @@ options object built elsewhere fires even when it sets the list.
 
 - The *quality* of an `input_guardrail` that is present (OAI-106) — a no-op
   guardrail satisfies the rule without screening anything.
-- The trustworthiness of the MCP server itself (pinning, auth, checksums) — both
+- The trustworthiness of the MCP server itself (pinning, auth, checksums) — the
   rules check for the control's presence, not the server's provenance.
 - Tool poisoning that survives an `input_guardrail` (OAI-106) or an
   `allowed_tools` list that itself names a poisoned or too-broad tool
@@ -456,7 +555,7 @@ options object built elsewhere fires even when it sets the list.
   choice, and this policy's own OAI-116 fix guidance already tells authors
   to "set requireApproval explicitly" — flagging the explicit form would
   penalize following that advice. A rule on the explicit form, if ever
-  added, is a distinct next rule (OAI-118), not a widening of OAI-117.
+  added, is a distinct rule, not a widening of OAI-117.
 - Neither OAI-116 nor OAI-117 combines its check with the other's — an agent
   missing both `allowedTools` and `requireApproval` fires both findings on
   the same `hostedMcpTool(...)` call rather than one elevated finding. This
@@ -480,6 +579,14 @@ options object built elsewhere fires even when it sets the list.
 - A `tool_config` dict or options object assembled outside the call. The
   predicate reads the literal at the call site, so a boundary set through a
   variable or helper is invisible and the rule fires anyway.
+- What a `tool_filter` or `toolFilter` allows. OAI-118 and OAI-119 match a
+  missing keyword, and their match has no condition on the filter's value, so
+  a static filter that names every tool, or a callable that admits every tool,
+  sets the keyword.
+- MCP server classes beyond the listed three. OAI-118 names `MCPServerStdio`,
+  `MCPServerSse`, and `MCPServerStreamableHttp`; OAI-119 names
+  `MCPServerStdio`, `MCPServerSSE`, and `MCPServerStreamableHttp`. The pack
+  states no other limits for either rule.
 
 ---
 
@@ -564,3 +671,94 @@ export const research = new Agent({
 7. Set `requireApproval` explicitly rather than leaving it unset — an omitted
    `requireApproval` is not a safe default in this SDK, it is silently
    rewritten to `'never'` inside `hostedMcpTool` itself.
+
+For an MCP server the agent connects to itself, name the tools it may see with
+`tool_filter`. The agent below also sets `input_guardrails` (OAI-106), and the
+run sets `max_turns` (OAI-112) and a wall-clock timeout (OAI-120):
+
+```python
+import asyncio
+
+from agents import (
+    Agent,
+    GuardrailFunctionOutput,
+    RunContextWrapper,
+    Runner,
+    TResponseInputItem,
+    input_guardrail,
+)
+from agents.mcp import MCPServerStdio, create_static_tool_filter
+
+
+@input_guardrail
+async def screen_input(
+    ctx: RunContextWrapper[None],
+    agent: Agent,
+    user_input: str | list[TResponseInputItem],
+) -> GuardrailFunctionOutput:
+    text = user_input if isinstance(user_input, str) else str(user_input)
+    suspicious = "ignore previous instructions" in text.lower()
+    return GuardrailFunctionOutput(output_info=None, tripwire_triggered=suspicious)
+
+
+async def main() -> None:
+    async with MCPServerStdio(
+        name="filesystem",
+        params={
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/docs"],
+        },
+        tool_filter=create_static_tool_filter(
+            allowed_tool_names=["read_file", "list_directory"]
+        ),
+    ) as server:
+        agent = Agent(
+            name="docs_reader",
+            instructions="Answer questions using the files under /srv/docs.",
+            mcp_servers=[server],
+            input_guardrails=[screen_input],
+        )
+        result = await asyncio.wait_for(
+            Runner.run(agent, "List the files in /srv/docs.", max_turns=5),
+            timeout=60,
+        )
+        print(result.final_output)
+
+
+asyncio.run(main())
+```
+
+8. Pass `tool_filter=create_static_tool_filter(allowed_tool_names=[...])` to
+   every `MCPServerStdio`, `MCPServerSse`, or `MCPServerStreamableHttp`,
+   naming only the tools this agent's task needs. Re-review the filter
+   whenever the task changes, and treat any server tool not in the list as
+   excluded by default.
+
+The TypeScript form sets `toolFilter` on the server's options:
+
+```ts
+import { Agent, MCPServerStdio, createMCPToolStaticFilter, run } from "@openai/agents";
+
+const server = new MCPServerStdio({
+  name: "filesystem",
+  fullCommand: "npx -y @modelcontextprotocol/server-filesystem /srv/docs",
+  toolFilter: createMCPToolStaticFilter({ allowed: ["read_file", "list_directory"] }),
+});
+
+await server.connect();
+try {
+  const agent = new Agent({
+    name: "docs_reader",
+    instructions: "Answer questions using the files under /srv/docs.",
+    mcpServers: [server],
+  });
+  const result = await run(agent, "List the files in /srv/docs.", { maxTurns: 5 });
+  console.log(result.finalOutput);
+} finally {
+  await server.close();
+}
+```
+
+9. Pass `toolFilter: createMCPToolStaticFilter({ allowed: [...] })` to every
+   `MCPServerStdio`, `MCPServerSSE`, or `MCPServerStreamableHttp`, with the
+   same re-review discipline as step 8.
