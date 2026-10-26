@@ -18,6 +18,11 @@ rules:
     confidence: 0.8
     scope: subagent
     fix_type: config
+  - id: CSDK-115
+    severity: high
+    confidence: 0.75
+    scope: subagent
+    fix_type: config
 references: [LLM06, LLM01]
 ---
 
@@ -25,9 +30,9 @@ references: [LLM06, LLM01]
 
 **Policy ID:** `claude_sdk_subagent_safety`  
 **File:** `claude_sdk/subagent_safety.yaml`  
-**Rules:** CSDK-110, CSDK-111, CSDK-112  
-**Severities:** high, high, medium  
-**Fix types:** config, config, config  
+**Rules:** CSDK-110, CSDK-111, CSDK-112, CSDK-115  
+**Severities:** high, high, medium, high  
+**Fix types:** config, config, config, config  
 **References:** LLM06, LLM01
 
 > Related: [agent_safety.md](agent_safety.md) covers the same over-granting threat
@@ -47,6 +52,13 @@ built-in; CSDK-112 grants `WebSearch`. Because the surface is markdown
 frontmatter, these rules carry no `language:` field and fire regardless of the
 surrounding codebase — including on flat subagent collections that ship no SDK
 code at all.
+
+CSDK-115 covers the subagent that declares no grant at all: a subagent file in a
+`.claude/agents/` directory whose frontmatter has no `tools:` key and no
+`disallowedTools:` entries. The match is a single predicate,
+`subagent_inherits_all_tools: true`. Unlike the three grant rules, CSDK-115 does
+not check markdown files found outside `.claude/agents/`, such as plugin
+`agents/` directories and flat collections.
 
 ---
 
@@ -68,6 +80,22 @@ subagent can do: `Bash` is arbitrary command execution (OWASP LLM06, excessive
 agency); write built-ins let it modify source, config, or the `.claude/` settings
 that govern it (also LLM06); `WebFetch` pulls attacker-controllable URL content back
 into the loop (OWASP LLM01, prompt injection) and is an SSRF surface besides.
+
+When the `tools:` key is absent, there is no list to review. Claude Code's
+subagents documentation states that a subagent with `tools` omitted inherits all
+tools available to subagents: the built-in tools and MCP tools available in the
+main conversation, narrowed by one filter that removes a short list of tools
+from all subagents and a second that reduces the built-in tools of a subagent
+running in the background. The built-in tools it lists as kept in the background
+include `Bash`, `Write`, `Edit` and `WebFetch`, and a background subagent keeps
+its MCP tools. The same documentation states that `disallowedTools` removes
+tools from the inherited or specified list. The pack's explanation says such a
+subagent therefore gets whichever of Bash, file-write, web-fetch and MCP tools
+the main conversation has, whatever its description says its job is. Claude
+Code's documentation also states that Claude decides when to delegate to a
+subagent and composes the delegation message the subagent works from. If
+instructions that steer the main conversation reach that message, they can
+reach the subagent and the tools it inherited.
 
 ---
 
@@ -151,9 +179,47 @@ genuinely research-oriented (a frontmatter edit).
 legitimately research-oriented subagent, which is a more common role than a
 shell-needing one.
 
+### CSDK-115 — Subagent omits tools and inherits the full subagent tool pool (Severity: high, Confidence: 0.75, Fix type: config)
+
+**What we detect:** A subagent file in a `.claude/agents/` directory whose
+frontmatter has no `tools:` key and no `disallowedTools:` entries
+(`subagent_inherits_all_tools: true`).
+
+**Why it is flaggable:** The mechanism is the one stated
+[above](#why-subagent-frontmatter-is-a-distinct-concern-in-agent-tools): a
+subagent with `tools` omitted inherits all tools available to subagents, and the
+pack's explanation says it gets whichever of Bash, file-write, web-fetch and MCP
+tools the main conversation has, whatever its description says its job is.
+
+**Real-world consequence:** If a review subagent's frontmatter sets `name` and
+`description` and nothing else, and the main conversation has `Bash` and a
+connected MCP server, the review subagent can run shell commands and call that
+server's tools. If instructions that steer the main conversation reach the
+delegation message Claude composes for it, the subagent can act on them with
+those tools.
+
+**Why severity is high:** The pack sets high and states no reasoning for it.
+
+**Fix type — config:** The pack's fix is a frontmatter edit. Add a `tools:` list
+naming the tools the role needs, for example `tools: Read, Grep, Glob` for a
+review or search role. If the subagent needs most of the pool, keep `tools`
+omitted and add a `disallowedTools:` list for the tools it must not reach, such
+as `Bash`, `Write`, `Edit` or `mcp__*`.
+
+**Confidence 0.75:** The pack sets 0.75 and states these limits of the check. The
+rule reads the frontmatter alone and cannot see which tools the main conversation
+has, so it cannot tell how wide the inherited pool is. A `tools:` key with an
+empty or null value counts as declared and stays silent. Any `disallowedTools:`
+entry silences the rule, whatever it removes. Markdown files found outside
+`.claude/agents/` (plugin `agents/` directories, flat collections) are not
+checked. In-code `AgentDefinition` subagents are covered by CSDK-103 and CSDK-120
+when they also set `bypassPermissions`, and are not checked here.
+
 ---
 
 ## What this policy does not cover
+
+For CSDK-110, CSDK-111 and CSDK-112:
 
 - Whether the grant is justified by the subagent's real role — these are review
   prompts, not verdicts.
@@ -163,6 +229,24 @@ shell-needing one.
   frontmatter check — a false positive).
 - The subagent's `permissionMode` frontmatter and whether the dispatching parent
   validates the task it passes down.
+
+For CSDK-115:
+
+- **How wide the inherited pool is.** The rule reads the frontmatter alone and
+  cannot see which tools the main conversation has.
+- **An empty or null `tools:` value.** A `tools:` key with an empty or null value
+  counts as declared and stays silent.
+- **What a `disallowedTools:` list removes.** Any `disallowedTools:` entry
+  silences the rule, whatever it removes.
+- **Subagent files outside `.claude/agents/`.** Plugin `agents/` directories and
+  flat collections are not checked.
+- **In-code `AgentDefinition` subagents.** CSDK-103 and CSDK-120 cover them when
+  they also set `bypassPermissions` (see [agent_safety.md](agent_safety.md)), and
+  CSDK-115 does not check them.
+- **Files the engine does not parse as subagents.** A `.claude/agents/` file with
+  no frontmatter, with frontmatter that is not valid YAML, or with no `name:`
+  yields no subagent, so CSDK-115 does not fire on it.
+- The pack states no other limits for this rule.
 
 ---
 
@@ -179,9 +263,31 @@ Review the requested files and report findings. You have no shell, write, or
 fetch access.
 ```
 
+The example above declares `tools:` and is silent for CSDK-115. A subagent that
+needs most of the pool can keep `tools` omitted and name what it must not reach
+in `disallowedTools:`. This example is silent for CSDK-115:
+
+```markdown
+---
+name: doc-editor
+description: Edits Markdown docs in this repo. Has no shell, web fetch or web search.
+disallowedTools: Bash, WebFetch, WebSearch
+---
+
+Edit the requested Markdown files. You have no shell, web fetch or web search
+access.
+```
+
+It still inherits the rest of the pool, including the MCP tools of the main
+conversation. The pack's fix names `mcp__*` as a `disallowedTools:` entry for a
+subagent that must not reach MCP tools.
+
 1. Default subagent templates to read-only tool sets (`Read`, `Grep`, `Glob`); add a
    privileged built-in only when the role demonstrably needs it.
 2. Audit shared/forked subagent collections before adopting them — an over-granted
    template carries its blast radius into your repo.
 3. Where a privileged built-in is required, pair it with a PreToolUse hook that
    allowlists exact commands, paths, or hosts.
+4. Give subagent templates a `tools:` list, or a `disallowedTools:` list when the
+   role needs most of the pool, so a copied template does not inherit the tool
+   pool of the conversation that adopts it.
