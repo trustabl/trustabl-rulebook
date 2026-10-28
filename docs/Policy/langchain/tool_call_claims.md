@@ -212,14 +212,11 @@ does a claim sent to an HTTP endpoint that merely stores it.
 
 ## What this policy does not cover
 
-- **Other languages and SDKs.** Only Python decorated-tool discovery classifies
-  `claim_use`. TypeScript tools, Claude Agent SDK tools (whose Python handler
-  takes a single `args` dict), Google ADK (whose mediation point is the agent's
-  `before_tool_callback`, an agent-scope fact), CrewAI, Pydantic AI, AutoGen and
-  Vercel AI have no rules yet.
-- **Tools found by other discovery paths.** A LangChain tool built with
-  `StructuredTool.from_function(...)` gets no `claim_use` fact, so LC-029 and LC-030
-  are silent for it; LC-028 still reads its parameters.
+- **Other languages and SDKs.** Python tool discovery, and TypeScript OpenAI
+  Agents discovery, classify `claim_use`; claim rules exist for the OpenAI
+  Agents SDK (Python and TypeScript), MCP, LangChain, CrewAI, Pydantic AI, the
+  Claude Agent SDK, Google ADK and AutoGen. Other TypeScript tools, including
+  Vercel AI, have no rules yet.
 - **Checks that are not checks.** A claim passed to any call that is not an
   output call is "checked" — including a stub `verify_claim` that returns
   `"allow"` unconditionally, or a comparison whose result is ignored. The rule
