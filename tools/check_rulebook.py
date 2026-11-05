@@ -19,7 +19,9 @@ It enforces four things:
                    exist.
   4. STRUCTURE  — every doc carries the sections the template guide requires. A
                    doc that stops before "Recommendations beyond the fix" tells a
-                   reader what is wrong but not what to do instead.
+                   reader what is wrong but not what to do instead. Each rule
+                   also needs its "### <ID> — ... (Severity: ..., Confidence:
+                   ...)" heading, and the doc a "**Rules:**" header line.
 
 Front-matter shape expected on each `docs/Policy/<category>/<topic>.md` (see
 docs/policy-rationale-doc-template-guide.md):
@@ -276,7 +278,9 @@ def check(
         # Severities / Fix types / References lines are deliberately prose
         # ("config (SKILL.md edits) + code ...") and do not parse as a list.
         rules_line = re.search(r"^\*\*Rules:\*\*\s*(.+?)\s*$", doc.body, re.MULTILINE)
-        if rules_line:
+        if not rules_line:
+            errors.append(f"{rel}: no **Rules:** header line (the template requires one)")
+        else:
             listed = [x for x in re.split(r"[,\s]+", rules_line.group(1)) if x]
             declared = [dr.rule_id for dr in doc.rules]
             if sorted(listed) != sorted(declared):
@@ -364,10 +368,20 @@ def check(
                 doc.body,
                 re.MULTILINE,
             )
-            if heading:
+            if not heading:
+                errors.append(
+                    f"{rel}: {rid} has no '### {rid} — <title> (Severity: ..., "
+                    f"Confidence: ...)' heading"
+                )
+            else:
                 meta = heading.group(1)
                 h_sev = re.search(r"Severity:\s*([A-Za-z]+)", meta)
                 h_conf = re.search(r"Confidence:\s*([0-9.]+)", meta)
+                if not h_sev or not h_conf:
+                    errors.append(
+                        f"{rel}: {rid} heading must state both Severity and "
+                        f"Confidence (found {meta!r})"
+                    )
                 if h_sev and h_sev.group(1).lower() != spec.severity:
                     errors.append(
                         f"{rel}: {rid} heading says severity "
