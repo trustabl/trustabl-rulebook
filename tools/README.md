@@ -63,14 +63,18 @@ rules users actually receive, so a polished PDF can never quietly go stale.
 2. **Consistency** — each doc's front-matter `severity` / `confidence` / `scope`
    matches the rule's YAML, and so does the per-rule `### RULE-ID — … (Severity:
    …, Confidence: …)` heading. The book may not claim a severity the engine does
-   not ship, in either the machine-readable copy or the one a reader sees.
+   not ship, in either the machine-readable copy or the one a reader sees. Every
+   front-matter rule must have that heading, and it must state both Severity and
+   Confidence.
 3. **Placement** — a rule is documented in the chapter (`category`/`topic`) where
    it actually lives, its `policy_id` matches the paired YAML's `policy.id`, and
    docs do not reference rules that no longer exist.
 4. **Structure** — every doc carries the sections the template guide requires
    (`What this policy covers`, `Rule-by-rule defense`, `What this policy does not
    cover`, `Recommendations beyond the fix`). A doc that stops early tells a
-   reader what is wrong but not what to write instead.
+   reader what is wrong but not what to write instead. The `**Rules:**` header
+   line must be present and list the same IDs as the front-matter (order is not
+   checked).
 
 It reads the YAML front-matter required on every `docs/Policy/<category>/<topic>.md`
 (see [`docs/policy-rationale-doc-template-guide.md`](../docs/policy-rationale-doc-template-guide.md)).
