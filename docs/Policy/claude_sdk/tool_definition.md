@@ -305,7 +305,7 @@ check.
 **Why severity is low and not medium:**
 Same reasoning as CSDK-001: it degrades selection quality without directly
 causing harm, and a distinctive function name partially compensates.
-Confidence is *higher* than CSDK-001 despite the lower severity — see below.
+Confidence is 0.85, below CSDK-001's 0.95 — see below.
 
 **Fix type — code:**
 Replace the placeholder with a real description — a source edit.
@@ -348,7 +348,8 @@ for a thin description.
 Expand the description — a source edit.
 
 **Confidence 0.8:**
-The lowest confidence in this policy, and the threshold is the reason: 40
+Tied for the lowest confidence in this policy: CSDK-008 and CSDK-022 also sit at 0.8.
+The threshold is the reason for CSDK-018's value: 40
 characters is a length heuristic, not a semantic judgment of sufficiency. A
 tool with self-explanatory parameter names (`def convert_usd_to_eur(amount:
 float) -> float:` docstringed `"""Converts USD to EUR."""`, 21 chars) may

@@ -84,10 +84,18 @@ capacity with no attacker action required beyond being slow to answer.
 
 MCP-024 applies the policy's premise to TypeScript: the MCP runtime does not
 enforce timeouts on tool code, and a hung request inside a handler stalls the
-server's response to the connecting client. Node's `fetch` has no implicit
-deadline, so a slow or unresponsive upstream blocks the handler until the
-socket eventually dies, and the connecting client is left waiting on a JSON-RPC
-response that never arrives.
+server's response to the connecting client. Node's `fetch` is built on undici, and
+the undici documentation lists no overall request timeout. It lists a
+`headersTimeout` (the wait for the complete response headers) and a `bodyTimeout`,
+each defaulting to 300 seconds. `bodyTimeout` measures the gap between
+consecutive body chunks, so a server that keeps sending data slowly is not cut
+off by it. A slow or unresponsive upstream can therefore hold the handler for
+minutes, or for as long as the body keeps trickling in, and the connecting
+client is left waiting on a JSON-RPC response that may arrive late or not at all.
+Sources, retrieved 2026-11-05:
+[undici Client options](https://github.com/nodejs/undici/blob/main/docs/docs/api/Client.md),
+[undici Agent](https://github.com/nodejs/undici/blob/main/docs/docs/api/Agent.md) and
+[Node.js fetch](https://nodejs.org/api/globals.html#fetch).
 
 ---
 
@@ -158,9 +166,14 @@ explanation names the clients (`fetch`, `axios`, `got`, `undici`) and the
 missing options (`signal`, `timeout`, `abortSignal`).
 
 **Why it is flaggable:**  
-Node's `fetch` has no implicit deadline. Without one of those options, a slow
-or unresponsive upstream blocks the handler until the socket eventually dies,
-and the connecting client is waiting on a JSON-RPC response that never arrives.
+Node's `fetch` is built on undici, and the undici documentation lists no overall
+request timeout. Its `headersTimeout` and `bodyTimeout` default to 300 seconds, and
+`bodyTimeout` measures the gap between body chunks, so a slowly trickling body is
+not cut off by it. Without one of those options, a slow or unresponsive upstream can
+hold the handler for minutes, or for as long as the body keeps arriving, and the
+connecting client is waiting on a JSON-RPC response that may arrive late or not at all.
+([undici Client options](https://github.com/nodejs/undici/blob/main/docs/docs/api/Client.md),
+retrieved 2026-11-05.)
 
 **Real-world consequence:**
 
