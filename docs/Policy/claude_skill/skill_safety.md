@@ -370,7 +370,7 @@ from the description alone, and the grant itself is over-privilege (**AST03**).
 **Why medium / confidence 0.5:** Deliberately narrow — it fires only on an
 explicit read-only *claim* contradicted by a real grant, not on every
 benign-sounding description — but the read-only-claim regex is a heuristic that
-can match incidental phrasing, so it ships at the pack's lowest confidence as a
+can match incidental phrasing, so it ships at 0.5, the lowest in this policy, as a
 review nudge. The broader "implicitly read-only-sounding" case is out of scope.
 
 ### CSKILL-070 — Skill is missing a description (Severity: low, Confidence: 0.9, Fix type: config)

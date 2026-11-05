@@ -216,9 +216,9 @@ additional, TS-specific narrowing decision documented there.
 
 ## Confidence gap
 
-Both rules ship at 0.5 — the lowest confidence in the shipped pack,
-tied with OAI-019. This is a deliberate floor, not an oversight, and it is
-lower than the sibling idempotency rules' 0.55/0.5 for a specific reason:
+Both rules ship at 0.5, the same as the TypeScript idempotency rule OAI-019 and
+below the Python one, OAI-009 (0.55). This is a deliberate setting, not an
+oversight, and the low value has a specific reason:
 **"no idempotency key" is a narrower absence claim than "no visible bound."**
 An idempotency key has one canonical shape (a parameter or a body marker
 naming it) and a small number of places it can live. A bound on an amount or
