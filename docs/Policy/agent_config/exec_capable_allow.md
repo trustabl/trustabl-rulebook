@@ -62,7 +62,8 @@ What is not flagged:
 - An exact command such as `Bash(git status)` or `Bash(git diff --stat)`.
 - A narrower prefix such as `Bash(git status *)` or `Bash(git diff:*)`.
 - `find` and the exec wrappers `watch`, `setsid`, `ionice` and `flock`.
-- A bare `Bash`, `Bash()` or `Bash(*)` allow entry. No rule in the pack flags one.
+- A bare `Bash` or `Bash(*)` allow entry (AGCFG-016 flags it). `Bash()` is not flagged by
+  any rule.
 - Any other program.
 
 How a finding is cancelled: the deny and ask lists of the settings files in the same
@@ -144,8 +145,8 @@ then allow." No tool source code changes.
   settings, hooks and prompt-time approvals are not seen.
 - A narrower prefix such as `Bash(git status *)` and an exact command such as
   `Bash(git status)` are not flagged.
-- A bare `Bash` or `Bash(*)` allow rule, and other programs that can run commands, are
-  not judged.
+- A bare `Bash` or `Bash(*)` allow rule is AGCFG-016's concern; other programs that can
+  run commands are not judged.
 - The command list is fixed.
 
 The pack states no other limits for this rule.
@@ -154,7 +155,8 @@ The pack states no other limits for this rule.
 
 ## What this policy does not cover
 
-- A committed bare `Bash`, `Bash()` or `Bash(*)` allow entry. No rule flags one.
+- A committed bare `Bash` or `Bash(*)` allow entry (AGCFG-016 flags it) and a `Bash()`
+  entry (no rule flags it).
 - Deny and ask rules in user or managed settings, hooks and prompt-time approvals.
 - Whether the folder has been trusted. The check reads the repo's settings files.
 - Programs other than `git`, `xargs` and `npx`, including `find` and the exec wrappers.
