@@ -63,7 +63,7 @@ and the backend not deduping by other means.
 
 **Fix type — code:** add an idempotency-key parameter and thread it to the backend.
 
-**Confidence 0.55:** the pack's lowest by design — backend-enforced idempotency,
+**Confidence 0.55:** low by design — backend-enforced idempotency,
 non-mutating verbs, and keys named outside the heuristic are common false positives.
 
 ---

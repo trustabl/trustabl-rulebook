@@ -105,7 +105,7 @@ irreversible: an agent cannot un-send a message or un-charge a card.
 **Fix type — code:** adding the parameter and threading it to the backing API is
 a source edit to the tool.
 
-**Confidence 0.55 — the lowest in this pack, deliberately:** the rule reasons
+**Confidence 0.55 — low, deliberately:** the rule reasons
 from a name and a parameter list, and both are weak signals. False positives: a
 tool named `update_cache` or `send_metric` is prefix-matching but harmless to
 repeat; a tool fronting a service that deduplicates server-side on its own

@@ -575,7 +575,7 @@ not high for the same reason as the other rungs.
 call is still labelled, and `mark_run_end` before the root span ends, with
 `error` on the exception path.
 
-**Confidence 0.6 — the lowest of the three:**  
+**Confidence 0.6 — the lowest of OBS-006, OBS-007 and OBS-008:**  
 The rule proves that calls exist, which is weaker evidence in both directions.
 The 0.4 gap:
 - **Partial labelling passes.** One `mark_tool_span` call anywhere satisfies the

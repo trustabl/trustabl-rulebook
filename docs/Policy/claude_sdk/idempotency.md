@@ -86,8 +86,8 @@ is a real, user-visible wrong action.
 Add an idempotency-key parameter and thread it to the backend — a source edit.
 
 **Confidence 0.55:**
-This is the lowest-confidence rule in the pack by design. False positives are
-common: the dedupe may live at the backend (the API enforces idempotency
+This is set low by design, one notch above its TypeScript twin CSDK-016 (0.5).
+False positives are common: the dedupe may live at the backend (the API enforces idempotency
 server-side regardless of the tool signature), the verb may be non-mutating
 (`create_summary` returns text), or the key may be named outside the heuristic.
 Treat it as a review prompt for side-effecting tools, not a defect.
@@ -130,7 +130,7 @@ Adding an `idempotencyKey` field to the tool's Zod schema and threading it to th
 backend is an edit to the tool's own source.
 
 **Confidence 0.5:**
-The lowest in the pack — set one notch below the Python CSDK-006's 0.55 because the
+The lowest in this policy — set one notch below the Python CSDK-006's 0.55 because the
 prefix set is bare (no separator), which widens both error modes. **False
 positives:** the verb prefix matches non-mutating names that merely start with the
 string — `updatedAt`-style helpers, `createSummary` (returns text, mutates

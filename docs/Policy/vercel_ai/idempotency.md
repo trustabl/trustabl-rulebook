@@ -75,7 +75,7 @@ occurring and the backend not deduping by other means.
 **Fix type — code:** add `idempotencyKey: z.string()` to `inputSchema` and
 forward it to the backing API.
 
-**Confidence 0.5:** lowest in the pack — backend-enforced idempotency and keys
+**Confidence 0.5:** backend-enforced idempotency and keys
 named outside the marker set are common false positives, and `has_body_text`
 is a substring heuristic. Binding names that do not use a mutating verb
 (`billCustomer`) also escape.

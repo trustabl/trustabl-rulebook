@@ -71,7 +71,7 @@ and the backend not deduping by other means.
 
 **Fix type — code:** add an idempotency-key parameter and thread it to the backend.
 
-**Confidence 0.55:** the pack's lowest by design — backend-enforced idempotency,
+**Confidence 0.55:** low by design — backend-enforced idempotency,
 non-mutating verbs, and keys named outside the heuristic are all common false
 positives. A review prompt, not a verdict.
 
@@ -98,7 +98,7 @@ and the backend not deduping by other means.
 **Fix type — code:** thread an idempotency key from the tool through to the
 backend and honor it on repeat.
 
-**Confidence 0.5:** the lowest in the pack — backend-enforced idempotency and keys
+**Confidence 0.5:** below OAI-009's 0.55 — backend-enforced idempotency and keys
 named outside the marker set are common false positives, and `has_body_text` is a
 substring heuristic.
 

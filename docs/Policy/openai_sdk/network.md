@@ -239,9 +239,11 @@ A redirect from the allowed host to `http://` has the same effect.
 **Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
 and integrity loss of the content the model reasons over.
 
-**Why medium / 0.6:** medium rather than OAI-018's high because the host is already bounded, so the residual risk needs a network-path attacker
-rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
-another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+**Why medium / 0.6:** medium rather than high because the host is already bounded, so the residual
+risk needs a network-path attacker rather than just a prompt injection. Confidence is 0.6 because
+the scheme may be enforced where this rule cannot see it: a helper defined in another function or
+module, a base URL configured on a client object, or a prefix built on an earlier line and passed by
+identifier.
 
 **Staging:** the rule requires the allow-list credit to be present, so OAI-018 and OAI-032 never fire on the same tool: SSRF first, then HTTPS once a host
 allow-list exists.
@@ -273,9 +275,11 @@ A redirect from the allowed host to `http://` has the same effect.
 **Real-world consequence:** credential and data disclosure to anyone on the network path (shared Wi-Fi, compromised proxy, hostile egress hop)
 and integrity loss of the content the model reasons over.
 
-**Why medium / 0.6:** medium rather than OAI-024's high because the host is already bounded, so the residual risk needs a network-path attacker
-rather than just a prompt injection. Confidence is 0.6 because the scheme may be enforced where this rule cannot see it: a helper defined in
-another function or module, a base URL configured on a client object, or a prefix built on an earlier line and passed by identifier.
+**Why medium / 0.6:** medium rather than high because the host is already bounded, so the residual
+risk needs a network-path attacker rather than just a prompt injection. Confidence is 0.6 because
+the scheme may be enforced where this rule cannot see it: a helper defined in another function or
+module, a base URL configured on a client object, or a prefix built on an earlier line and passed by
+identifier.
 
 **Staging:** the rule requires the allow-list credit to be present, so OAI-024 and OAI-033 never fire on the same tool: SSRF first, then HTTPS once a host
 allow-list exists.

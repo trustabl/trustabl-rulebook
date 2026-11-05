@@ -340,8 +340,9 @@ the cap as a signal to surface and handle rather than to raise it: if a task
 legitimately needs many turns, split it into bounded sub-runs instead of
 removing the bound.
 
-**Confidence 0.6:** lower than every kwarg-presence/absence rule above because
-the predicate does something none of them do — it correlates two separately
+**Confidence 0.6:** below OAI-101, OAI-102, OAI-103, OAI-104, OAI-105 and OAI-109
+above (OAI-110 is also 0.6) because the predicate does something none of them do —
+it correlates two separately
 discovered structures, `AgentDef` and `AgentRunCallDef`, by same-file variable
 name, rather than reading kwargs off one call. That correlation has two real
 gaps. Cross-file correlation is not attempted at all: an agent constructed in

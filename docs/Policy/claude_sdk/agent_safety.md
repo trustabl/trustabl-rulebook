@@ -258,8 +258,9 @@ URL can point at internal addresses).
 content carries follow-on instructions.
 
 **Why severity is high and not medium:** It combines two distinct attack classes in
-one grant. Lowest confidence here (0.75) because fetching is a common, sometimes
-legitimate need and the grant alone does not prove misuse.
+one grant. Confidence is 0.75, below the 0.8 of the Bash, WebSearch and
+filesystem-write grants (CSDK-101, CSDK-102, CSDK-104), because fetching is a
+common, sometimes legitimate need and the grant alone does not prove misuse.
 
 **Fix type — config:** Remove `WebFetch`, or gate it with a PreToolUse hook that
 allowlists hosts and blocks internal ranges (see also [ssrf.md](ssrf.md)).
