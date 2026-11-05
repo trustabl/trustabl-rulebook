@@ -119,7 +119,7 @@ def pack_provenance(rules_repo: Path) -> str:
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "the rules pack"
-    return f"trustabl-rules@{sha}" if sha else "the rules pack"
+    return f"agent-reliability-rules@{sha}" if sha else "the rules pack"
 
 
 def build(repo: Path, rules_repo: Path) -> str:

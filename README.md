@@ -59,7 +59,7 @@ Rationale coverage is likewise enforced rather than described:
 rationale doc, when a doc's severity/confidence/scope (front-matter or rule
 heading) disagrees with the pack, or when a doc omits a required section, a rule
 heading or the `**Rules:**` header line. A green CI run means every rule in
-[trustabl-rules](https://github.com/trustabl/trustabl-rules) is documented here.
+[agent-reliability-rules](https://github.com/trustabl/agent-reliability-rules) is documented here.
 
 ## Using the rulebook
 
