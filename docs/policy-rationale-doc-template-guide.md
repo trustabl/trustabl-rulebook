@@ -43,7 +43,13 @@ references: [LLM06, LLM02]        # OWASP ids (see "Which taxonomies" below)
 The gate fails CI when: a shipped rule has no doc covering it (COVERAGE), a
 doc's `severity`/`confidence`/`scope` disagree with the YAML (CONSISTENCY), or a
 rule is documented in the wrong `category`/`topic` or no longer exists
-(PLACEMENT). Run it locally with `python tools/check_rulebook.py`.
+(PLACEMENT). It also fails when a doc is missing one of the required sections
+(STRUCTURE: "What this policy covers", "Rule-by-rule defense", "What this policy
+does not cover", "Recommendations beyond the fix"); when a front-matter rule has
+no `### <ID> — … (Severity: …, Confidence: …)` heading, or that heading's
+severity or confidence disagrees with the pack; and when the `**Rules:**` header
+line is missing or lists different IDs than the front-matter. Run it locally with
+`python tools/check_rulebook.py`.
 
 > **`fix_type` and `references` are editorial.** The engine's rule schema
 > (`RuleDef`) does not model either field today, so the gate validates their
