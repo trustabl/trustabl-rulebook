@@ -6,10 +6,11 @@ All shipped rules across every SDK. ID prefix denotes the rule family:
 `MCP-` Model Context Protocol, `LC-` LangChain / LangGraph, `CREW-` CrewAI,
 `AG2-` AutoGen / AG2, `VAI-` Vercel AI SDK, `PYD-` Pydantic AI,
 `CSKILL-` Claude Skills, `OBS-` Agent Observability, `RAW-` Raw LLM SDK,
-`AGCFG-` / `MCPCFG-` Agent Configuration, `CI-` CI Workflows. Within a
+`AGCFG-` / `MCPCFG-` Agent Configuration, `CI-` CI Workflows,
+`AGSRV-` Agent Servers. Within a
 family: `NNN` tool-scope, `1NN` agent / subagent scope, `2NN` repo scope.
-`CSKILL-` rules are all skill-scope, and `OBS-`, `RAW-`, `AGCFG-`, `MCPCFG-`
-and `CI-` rules are all repo-scope, so their numbers group by topic instead.
+`CSKILL-` rules are all skill-scope, and `OBS-`, `RAW-`, `AGCFG-`, `MCPCFG-`,
+`CI-` and `AGSRV-` rules are all repo-scope, so their numbers group by topic instead.
 
 Risk score = `severity_weight × confidence × 100` (engine formula; weights: critical=1.0, high=0.7, medium=0.4, low=0.15, info=0.05). Higher = worse.
 
@@ -58,7 +59,8 @@ Users can contribute their own policies by:
 | Raw LLM SDK            | 0       | 0      | 0        | 2      | 0      | 2       | [raw_llm_sdk/POLICY_INDEX.md](raw_llm_sdk/POLICY_INDEX.md)     |
 | Agent Configuration    | 0       | 0      | 0        | 17     | 0      | 17      | [agent_config/POLICY_INDEX.md](agent_config/POLICY_INDEX.md)   |
 | CI Workflows           | 0       | 0      | 0        | 5      | 0      | 5       | [ci/POLICY_INDEX.md](ci/POLICY_INDEX.md)                       |
-| **All**                | **224** | **81** | **4**    | **59** | **21** | **389** |                                                                |
+| Agent Servers          | 0       | 0      | 0        | 2      | 0      | 2       | [agent_server/POLICY_INDEX.md](agent_server/POLICY_INDEX.md)   |
+| **All**                | **224** | **81** | **4**    | **61** | **21** | **391** |                                                                |
 
 ## All rules
 
@@ -453,3 +455,5 @@ Users can contribute their own policies by:
 | 387 | CI-003     | CI            | repo     | github_actions                                                                                                                        | Checkout persists credentials in an agent job                                                      | high     | 0.70       | 49.0 | [ci/agent_hardening.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/agent_hardening.yaml)                                     | [agent_hardening.md](docs/Policy/ci/agent_hardening.md)                           |
 | 388 | CI-004     | CI            | repo     | github_actions                                                                                                                        | Agent step grants unrestricted shell                                                               | high     | 0.80       | 56.0 | [ci/agent_hardening.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/agent_hardening.yaml)                                     | [agent_hardening.md](docs/Policy/ci/agent_hardening.md)                           |
 | 389 | CI-005     | CI            | repo     | github_actions                                                                                                                        | Agent job with shell or web access has no egress restriction                                       | medium   | 0.50       | 20.0 | [ci/agent_hardening.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/ci/agent_hardening.yaml)                                     | [agent_hardening.md](docs/Policy/ci/agent_hardening.md)                           |
+| 390 | AGSRV-001  | Agent Server  | repo     | agent_server                                                                                                                          | Agent server is configured to accept any browser origin                                            | high     | 0.60       | 42.0 | [agent_server/any_origin.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_server/any_origin.yaml)                           | [any_origin.md](docs/Policy/agent_server/any_origin.md)                           |
+| 391 | AGSRV-002  | Agent Server  | repo     | agent_server                                                                                                                          | OpenHands agent server is bound to all interfaces and published with no session key                | critical | 0.70       | 70.0 | [agent_server/unauthenticated_publish.yaml](https://github.com/trustabl/agent-reliability-rules/blob/main/agent_server/unauthenticated_publish.yaml) | [unauthenticated_publish.md](docs/Policy/agent_server/unauthenticated_publish.md) |
