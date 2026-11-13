@@ -89,7 +89,8 @@ describes instrumentation that is present and provably broken.
 
 **Fix type — config:**  
 LC-202 is provider/handler wiring at startup (`config`). LC-112
-requires changing the agent's construction to pass the handler (`code`).
+requires passing the handler to the agent, in its constructor or in its run
+call's config (`code`).
 
 **Confidence 0.75:**  
 The 0.25 gap is detection reach, not judgement. False positives: instrumentation
@@ -133,13 +134,20 @@ failing the build.
 
 **Fix type — code:**  
 LC-202 is provider/handler wiring at startup (`config`). LC-112
-requires changing the agent's construction to pass the handler (`code`).
+requires passing the handler to the agent, in its constructor or in its run
+call's config (`code`).
 
 **Confidence 0.7:**  
-The 0.30 gap is about intent and about kwarg reach. False positives: the agent is
-instrumented through a process-wide call rather than its own kwarg; the kwarg is
-set indirectly through a config object or a spread/**kwargs the discovery pass
-does not resolve; the agent is deliberately excluded (a local debug path, a test
+The 0.30 gap is about intent and about kwarg reach. The engine already credits
+three ways of wiring a handler outside the constructor: a process-wide
+`LangChainInstrumentor().instrument()`, the same instrumentor passed to
+`langwatch.setup(instrumentors=[...])`, and a run call that passes callbacks in
+a literal config (`agent.invoke(..., config={"callbacks": [...]})` or
+`config=RunnableConfig(callbacks=[...])`), which is how LangWatch, Langfuse and
+LangSmith document the LangChain integration. False positives that remain: the
+handler arrives through a config or callbacks list passed by name, a
+`.with_config(...)` chain, a spread/**kwargs, or a process-wide call the pass does
+not recognize; the agent is deliberately excluded (a local debug path, a test
 fixture). False negatives: the kwarg is present but set to a falsy value, which
 this predicate reads as instrumented.
 
@@ -175,6 +183,20 @@ executor = AgentExecutor(
     tools=tools,
     max_iterations=10,
     callbacks=[handler],   # LC-112: this agent reports like its siblings
+)
+```
+
+The handler can also travel with the run call instead of the constructor, which
+is how LangWatch, Langfuse and LangSmith document their LangChain integration.
+LC-112 credits a literal `config` dict or `RunnableConfig`; a config built
+elsewhere and passed by name is not read.
+
+```python
+from langchain_core.runnables import RunnableConfig
+
+result = executor.invoke(
+    {"input": question},
+    config=RunnableConfig(callbacks=[handler]),   # LC-112: credited at run time
 )
 ```
 
