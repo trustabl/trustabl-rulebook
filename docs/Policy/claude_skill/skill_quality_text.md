@@ -69,16 +69,18 @@ references: [LLM02, LLM05, LLM06, AST03]
 ## What this policy covers
 
 Eight quality and data-governance rules over Claude Code Agent Skills
-(`SKILL.md`), each implemented as a case-insensitive **substring** search
-(`strings.Contains`, not a word-boundary regex) via one of three predicates —
-`skill_name_has_text`, `skill_description_has_text`, `skill_body_has_text` —
-against a fixed keyword or phrase list, or the negation of one. Two rules
-(CSKILL-083, CSKILL-085) fire on the **absence** of every word in their list
-rather than the presence of any; one rule (CSKILL-082) compounds a
-name-text match with the `skill_allows_tool` predicate CSKILL-050/060 also
-use in `skill_safety.yaml`. Every match is over parsed frontmatter/body
-strings, so — like `skill_safety.yaml` — these rules carry no `language:`
-field and fire independent of the surrounding codebase.
+(`SKILL.md`). Five of them (CSKILL-080, 081, 084, 085, 086) use
+`skill_text_matches`, a sentence-scoped, word-boundary predicate (a term
+matches as a whole word, with the inflections -s, -es, -ed and -ing on its
+last word). The other three (CSKILL-082, 083, 087) run a case-insensitive
+**substring** search (`strings.Contains`) via `skill_name_has_text` or
+`skill_description_has_text` / `skill_body_has_text`. Two rules (CSKILL-083,
+CSKILL-085) fire on the **absence** of all the words in their list rather than
+the presence of any; one rule (CSKILL-082) compounds a name-text match with
+the `skill_allows_tool` predicate CSKILL-050/060 also use in
+`skill_safety.yaml`. All matching is over parsed frontmatter/body strings, so
+like `skill_safety.yaml` these rules carry no `language:` field and fire
+independent of the surrounding codebase.
 
 ---
 
@@ -201,8 +203,10 @@ real disclaimer.
 
 **What we detect:** `skill_text_matches` over the skill's `description` and
 `body` fields against a sensitive-data-class term list (`password`, `secret`,
-`credential`, `token`, `api key`, `ssn`, `social security`, `credit card`,
-`pii`, `personal data`, `sensitive data`, `confidential`, `private key`),
+`credential`, `api token`, `access token`, `auth token`, `authentication
+token`, `bearer token`, `refresh token`, `session token`, `oauth token`,
+`secret token`, `api key`, `ssn`, `social security`, `credit card`, `pii`,
+`personal data`, `sensitive data`, `confidential`, `private key`),
 requiring the SAME sentence to also match an operational-verb term
 (`require_context`: `read`, `write`, `store`, `save`, `send`, `transmit`,
 `collect`, `process`, `handle`, `log`, `extract`, `parse`, `redact`,
@@ -213,7 +217,10 @@ sentence that also matches `exclude_context` (`lives in`, `live in`,
 `skill_description_has_text` substring match after confirmed false
 positives from outreach feedback: a skill documenting "API keys live in
 GitHub Actions secrets" was flagged for merely naming where a credential
-lives, with no claim the skill itself touches it.
+lives, with no claim the skill itself touches it. A later change replaced the
+bare term `token` with the credential-type phrases above, after a public
+sample showed it matching LLM tokens ("token budget"), design tokens and
+parser tokens.
 
 **Why it is flaggable:** Naming a sensitive-data class in the same sentence
 as an operational verb — reads it, stores it, sends it — is a claim that the
@@ -246,10 +253,14 @@ word-boundary matching plus `sensitive data` (rather than a bare `sensitive`)
 closes substring artifacts like `case-insensitive`. Overloaded terms remain
 a residual gap: "the department secretary handles the request" would not
 false-fire on `secret` (word boundaries now require the whole word, and
-`secretary` is not a generated inflection of `secret`), but a sentence like
-"store the pagination token" or "the session token expires" still fires,
-since `token` in its routine engineering sense is indistinguishable from a
-credential token by this rule. **False negatives:** sensitive fields named
+`secretary` is not a generated inflection of `secret`). A bare `token` with
+no credential qualifier does not match, so "store the pagination token" is
+silent, and so is a real credential token written without a qualifier ("the
+installer writes the token to ..."); on a public sample of 1,820 skills this
+cost 11 findings judged correct and removed 34 judged false. `credential` in
+the sense of a professional qualification, and `access` or `process` used in
+a different sense than operating on the data, still match.
+**False negatives:** sensitive fields named
 by domain-specific terms outside this list — date of birth, routing number,
 medical record number, passport number — are invisible to the rule, as is a
 handling claim split across two sentences (e.g. "Handles customer PII." next
@@ -347,9 +358,12 @@ of guidance, is what the predicate actually checks.
 
 ### CSKILL-084 — Broad, unminimized data access (Severity: medium, Confidence: 0.6, Fix type: config)
 
-**What we detect:** `skill_body_has_text` matches any of `all data`,
-`entire`, `complete database`, `every record`, `full export`, `all files`,
-`all records` — a substring search over the body only.
+**What we detect:** `skill_text_matches` over the body, with the phrases `all
+data`, `entire database`, `entire dataset`, `entire table`, `complete
+database`, `every record`, `full export`, `all records`, matched as whole
+words within one sentence. This replaced a raw substring search for `entire`,
+`all files` and the phrases above, after a public sample showed "entirely"
+matching `entire` and "small files" matching `all files`.
 
 **Why it is flaggable:** Broad-access phrasing suggests the skill pulls
 more than the task at hand needs. Requesting a full dataset or export when
@@ -373,20 +387,27 @@ real, unminimized pull.
 specific records or fields the task needs; state explicitly if a full
 export genuinely is the task.
 
-**Confidence 0.6:** `entire` is a common intensifier with plenty of
-unrelated uses ("read the entire file before editing" refers to one
-file's contents, not indiscriminate data access). **False negatives:**
-paraphrased broad-access language evades the exact-phrase list entirely —
-"pull everything from the users table," "grab the whole dataset," "export
-all the customer info" — none contain the literal phrases this rule checks
-for, so a body can request everything in the database while using none of
-these seven strings.
+**Confidence 0.6:** The phrase list is now whole-word, so "entirely" and
+"small files" no longer match, and a bare `entire` or `all files` is not
+flagged (reading one whole file, or all files in a folder, is part of many
+coding skills). On a public sample of 1,820 skills the old rule fired 278
+times and none of those findings was a request to pull a whole data
+collection; the new list fires 26 times, 20 of them judged false and 6 weak.
+That sample has no confirmed true positive for this rule, so treat the
+confidence as unmeasured. **False negatives:** paraphrased broad-access
+language evades the list entirely, "pull everything from the users table,"
+"grab the whole dataset," "export all the customer info" contain none of the
+phrases.
 
 ### CSKILL-085 — Description states no purpose (Severity: low, Confidence: 0.5, Fix type: config)
 
-**What we detect:** `not: skill_description_has_text([in order to, to
-allow, to enable, purpose, used for, designed to, intended to])` — fires
-only when **none** of these seven phrases appears in the description.
+**What we detect:** `not: skill_text_matches` over the description with the
+terms `to`, `for`, `when`, `use`, `used`, `in order to`, `so that`,
+`purpose`, `helps`, `designed to`, `intended to` (whole words) — the rule
+fires when **none** of them appears. The earlier list held seven phrases
+(`in order to`, `to allow`, `to enable`, `purpose`, `used for`, `designed
+to`, `intended to`) and fired on 1,797 of 1,820 sampled skills; the new
+function-word list is a coarse proxy for "the description says why or when".
 
 **Why it is flaggable:** A description with no purpose phrasing states
 what the skill touches without stating why. A user or reviewer deciding
@@ -408,20 +429,22 @@ simply isn't phrased with one of these seven transitional phrases.
 description.
 
 **Confidence 0.5 (mandatory — absence-based logic):** Same asymmetry as
-CSKILL-083, applied to the description field. A description can state a
-clear purpose without any of the seven phrases — "Summarizes PR diffs into
-release-note bullets" states intent through plain subject-verb-object
-structure, no "to enable" required — and gets flagged anyway. Conversely, a
-description can contain one of the phrases incidentally without conveying
-real intent — "intended to be run after `npm install`" states a
-precondition, not a purpose — and passes the rule while still leaving a
-reviewer with nothing to weigh the skill's access against.
+CSKILL-083, applied to the description field. The word list now accepts "to",
+"for", "when" and "use", so "Summarizes PR diffs into release-note bullets"
+is still flagged (no listed word) although it states intent, and a description
+that contains "for" or "to" in another sense passes without stating a purpose.
+Descriptions written in a language other than English are flagged regardless.
+On a public sample the old list flagged 1,797 of 1,820 skills (1,796 judged
+false); the new list flags 128 (127 judged false), so a text-match rule of
+this shape does not separate stated from missing purpose well.
 
 ### CSKILL-086 — Data retention or logging implied (Severity: medium, Confidence: 0.65, Fix type: config)
 
-**What we detect:** `skill_body_has_text` matches any of `log`, `store`,
-`persist`, `save`, `retain`, `cache`, `database`, `write to`, `append to`,
-`record` — substring search over the body only.
+**What we detect:** `skill_text_matches` over the body with the terms `log`,
+`store`, `persist`, `persistence`, `persistent`, `save`, `retain`, `cache`,
+`write to`, `append to`, matched as whole words within one sentence. `record`
+and `database` were terms in the earlier substring version and were removed:
+a noun that names a record or a database does not persist anything.
 
 **Why it is flaggable:** Persistence language with no stated retention
 policy leaves the lifetime, location, and access control of whatever gets
@@ -444,15 +467,20 @@ stays above a documentation nudge.
 under what basis — or state explicitly that nothing persists beyond the
 current turn.
 
-**Confidence 0.65:** The substring match on `log` and `store` produces
-concrete, verifiable false positives: `log` is contained in `catalog`,
-`dialog`, and `logic` — a body describing "the skill's routing logic"
-trips this rule with no logging involved at all. `store` is contained in
-`restore` — "restore the previous version if the check fails" trips it via
-`restore` alone. **False negatives:** persistence described without any of
-these ten strings — "keep a copy," "write the results out," "maintain a
-history of runs" — evades the list entirely; `write to` is listed as an
-exact two-word phrase, so "write the results out" doesn't match it.
+**Confidence 0.65:** Whole-word matching closes the substring artifacts the
+old rule had: `log` inside `logic`, `catalog`, `dialog`, `methodology` and
+`blog`, and `store` inside `restore`. Remaining false positives: the sentence
+is not checked for a data-class word, so persisting a setting or a generated
+file matches, as does a sentence that reads logs rather than writes them.
+Inflection makes "caching" and "saving" match, which the substring version did
+not for those two forms ("saving" in UI text is a false positive), and `-` is
+not treated as a word character, so `git diff --cached` matches `cache`.
+On a public sample of 1,820 skills the findings went from 1,578 to 1,267.
+Labels are model-assisted and a 30-finding spot check found about 4 wrong, all
+substring artifacts counted as correct, so the false-positive count (about 525
+after the change) is understated. **False negatives:** persistence described
+without any of these terms — "keep a copy," "write the results out,"
+"maintain a history of runs" — evades the list.
 
 ### CSKILL-087 — Skill description is a placeholder (Severity: low, Confidence: 0.85, Fix type: config)
 
@@ -510,18 +538,16 @@ signal.
   code at all), and a skill can implement genuinely correct error handling,
   purpose-scoping, or data minimization described in language none of these
   keyword lists anticipate.
-- **Substring, not word-boundary, matching — CSKILL-082..087 only.**
-  CSKILL-080 and CSKILL-081 were moved onto `skill_text_matches`, a
+- **Substring, not word-boundary, matching — CSKILL-082, 083 and 087.**
+  CSKILL-080, 081, 084, 085 and 086 use `skill_text_matches`, a
   sentence-scoped, word-boundary predicate (see their entries above); the
-  remaining six rules in this pack still use the raw-substring
-  `skill_*_has_text` predicates (`strings.Contains`), so short or common
-  fragments still false-positive on unrelated words that happen to contain
-  them: `audit` inside `auditorium` and `scan` inside `scanner` (CSKILL-082),
-  `log` inside `catalog` / `dialog` / `logic` and `store` inside `restore`
-  (CSKILL-086), `todo` inside `todos` (CSKILL-087). These six were not moved onto the new predicate because no
-  confirmed false positive has been reported against them yet — see
-  `CLAUDE.md`'s two-repo rule model for the sync obligation this would carry
-  if the fixture ever changed here without a matching production change.
+  remaining three still use the raw-substring `skill_*_has_text` predicates
+  (`strings.Contains`), so short or common fragments can match unrelated
+  words that contain them: `audit` inside `auditorium` and `scan` inside
+  `scanner` (CSKILL-082), `todo` inside `todos` (CSKILL-087). CSKILL-083
+  matches `error`, `fail` and `handle` as substrings too. No confirmed false
+  positive has been reported against these three. See `CLAUDE.md`'s two-repo
+  rule model for the sync obligation a change would carry.
 - **Field asymmetry across rules.** CSKILL-080 scans name and description
   only, never body; CSKILL-084 and CSKILL-086 scan body only, never
   description; CSKILL-087 scans description only, never name or body; a
