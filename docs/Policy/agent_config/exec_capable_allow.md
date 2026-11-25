@@ -24,11 +24,14 @@ references: []
 > Anthropic's permissions page (`code.claude.com/docs/en/permissions`). The description
 > of `xargs` was read on the same day from its manual page (`man7.org`, `xargs(1)`).
 > The paper cited below was read on 2026-10-28 in its arXiv HTML version. **Not
-> verified, and therefore not assumed:** whether a narrower prefix such as
+> verified, and therefore not assumed:** whether Claude Code prompts for some `env`,
+> `sed` or `awk` forms in ways its documentation does not describe (the page was read for
+> those three commands on 2026-11-11 and says nothing about them under a prefix rule);
+> whether a narrower prefix such as
 > `Bash(git status *)` lets a caller place options before the subcommand; how Claude
 > Code versions older than the page read on that day treat these rules; whether
 > permission modes other than the Manual mode the page describes change the result;
-> and the behavior of programs other than `git`, `xargs` and `npx`.
+> and the behavior of programs other than `git`, `xargs`, `npx`, `env`, `sed` and `awk`.
 
 ---
 
@@ -40,9 +43,10 @@ matching command without a prompt. The pack loads for each scan, because the fil
 reads have no SDK import; the rule's own predicate does the gating.
 
 This policy has one rule. **AGCFG-012** flags a committed settings file whose
-`permissions.allow` list holds a Bash rule that is a bare `git`, `xargs` or `npx`
-command followed by a trailing wildcard. It is repo scope and fires once per scan,
-attributed to the first offending allow entry. Like AGCFG-011, it is not a pre-trust
+`permissions.allow` list holds a Bash rule that is a bare `git`, `xargs`, `npx`,
+`env`, `sed` or `awk` command followed by a trailing wildcard. It is repo scope and
+fires once per scan, attributed to the first offending allow entry. Like AGCFG-011,
+it is not a pre-trust
 rule: Claude Code applies a project's allow rules after the user accepts the folder.
 
 ---
@@ -53,8 +57,9 @@ rule: Claude Code applies a project's allow rules after the user accepts the fol
 
 **What we detect:** an entry in the `permissions.allow` list of a `.claude/settings.json`
 or `.claude/settings.local.json`, at any depth in the repo, whose Bash pattern is one of
-`git`, `xargs` or `npx` followed by `:*` or a space and `*`. For example `Bash(git:*)`,
-`Bash(git *)`, `Bash(xargs *)` and `Bash(npx:*)` are flagged. Gated by
+`git`, `xargs`, `npx`, `env`, `sed` or `awk` followed by `:*` or a space and `*`. For
+example `Bash(git:*)`, `Bash(git *)`, `Bash(xargs *)`, `Bash(npx:*)`, `Bash(env *)`,
+`Bash(sed:*)` and `Bash(awk *)` are flagged. Gated by
 `repo_settings_allow_exec_capable_prefix`.
 
 What is not flagged:
@@ -64,7 +69,7 @@ What is not flagged:
 - `find` and the exec wrappers `watch`, `setsid`, `ionice` and `flock`.
 - A bare `Bash` or `Bash(*)` allow entry (AGCFG-016 flags it). `Bash()` is not flagged by
   any rule.
-- Any other program.
+- Any other program, including `gawk`, `mawk` and `nawk`, which are separate names.
 
 How a finding is cancelled: the deny and ask lists of the settings files in the same
 `.claude/` folder are pooled. A bare `Bash`, `Bash()`, `Bash(*)`, or a wildcard rule on
@@ -96,7 +101,24 @@ page, read on 2026-10-28.
   into version control, and that a `.claude/settings.local.json` tracked in git is
   treated as repository-supplied.
 
-A prefix rule on one of these three commands therefore approves the options or the
+- `env`, `sed` and `awk` (read 2026-11-11 from the GNU manuals as raw text). `env`: "`env`
+  runs a command with a modified environment", synopsis `env [OPTION]... [NAME=VALUE]...
+  [COMMAND [ARGS]...]`, and "The first operand that does not contain the character `=`
+  specifies the program to invoke". `sed`: the `e [COMMAND]` command "executes the command
+  that is found in pattern space", or with a parameter "interprets it as a command", and
+  the `s` flag `e` executes the substitution result; `--sandbox` rejects the `e`, `w` and `r`
+  commands, and "cannot run external
+  programs". `w /dev/stdout` names a stream and is not an exec form. `awk` (gawk):
+  "`system(COMMAND)`: Execute the operating system command COMMAND", and "`print ITEMS |
+  COMMAND` ... opens a pipe to COMMAND"; `--sandbox` disables `system()`, `getline`
+  redirections and `print` redirections. The permissions page says nothing about these
+  three under a prefix rule. Its sole `sed` sentence concerns unquoted globs: commands
+  "with write-capable or exec-capable flags, such as `find`, `sort`, `sed`, and `git`,
+  prompt when an unquoted glob is present". The pack adds them because the manuals show
+  each can run another program and the page documents no prompt for the form; Claude Code
+  may prompt for some of these forms in ways its documentation does not describe.
+
+A prefix rule on one of these six commands therefore approves the options or the
 inner command a caller places after it, so it covers more than the command the author
 had in mind. Claude Code applies a project's allow rules to a trusted folder, so the
 call runs with no prompt.
@@ -159,7 +181,8 @@ The pack states no other limits for this rule.
   entry (no rule flags it).
 - Deny and ask rules in user or managed settings, hooks and prompt-time approvals.
 - Whether the folder has been trusted. The check reads the repo's settings files.
-- Programs other than `git`, `xargs` and `npx`, including `find` and the exec wrappers.
+- Programs other than `git`, `xargs`, `npx`, `env`, `sed` and `awk`, including `find` and
+  the exec wrappers.
 - A narrower prefix, which is not flagged.
 - A settings file that is not valid JSON. It is skipped.
 
@@ -207,6 +230,12 @@ A committed rule that makes a prefix prompt for the whole team:
   retrieved 2026-10-28. The source of the Claude Code behavior above.
 - `xargs(1)` manual page, `man7.org/linux/man-pages/man1/xargs.1.html`, retrieved
   2026-10-28.
+- GNU sed manual (`gnu.org/software/sed/manual/sed.txt`), GNU coreutils manual, section
+  "env: Run a command in a modified environment" (`gnu.org/software/coreutils/manual/
+  coreutils.txt`), and the GNU gawk manual (`gnu.org/software/gawk/manual/gawk.txt`),
+  retrieved 2026-11-11. Cited for what `env`, `sed` and `awk` can run, and nothing more.
+- Claude Code documentation, "Configure permissions", retrieved again 2026-11-11 for the
+  `env`, `sed` and `awk` statements above.
 - Xianglin Yang, Yechao Zhang, Jiahao Liu, Yulin Chen, Yuxin Cao, Bryan Hooi and Jiaheng
   Zhang, *From Approval to Abuse: Privilege Escalation Attacks on Harness-Protected Coding
   Agents*, arXiv 2610.22987 (v1, 16 October 2026). Cited for the problem class.

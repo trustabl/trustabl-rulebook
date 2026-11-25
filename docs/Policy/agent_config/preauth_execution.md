@@ -35,12 +35,19 @@ references: [LLM06, LLM03, LLM02]
 **Fix types:** config, config, config, config  
 **References:** LLM06 (Excessive Agency), LLM03 (Supply Chain), LLM02 (Sensitive Information Disclosure)
 
-> **Verification status.** The Gemini CLI hooks shape and the Codex project-config
-> trust behavior are **not verified against vendor docs**. The scanner reads
-> Gemini hooks with the same walk it uses for Claude Code (`hooks.<Event>`, nested
-> `hooks[].command` or flat `command`) and reads Codex config for the documented
-> key names only. Treat Gemini and Codex hits as "this file asks for it", and check
-> the current vendor behavior before you rely on a verdict.
+> **Verification status.** Read on 2026-11-11. The Codex project-config behavior comes
+> from the Codex configuration reference (`developers.openai.com/codex/config-reference`)
+> and from `PROJECT_LOCAL_CONFIG_DENYLIST` in `codex-rs/config/src/loader/mod.rs` on the
+> `main` branch of `openai/codex`. The Gemini CLI behavior comes from its
+> `docs/reference/configuration.md` and from its source at commit `e5d88fb` (2026-11-10):
+> `packages/core/src/core/contentGenerator.ts` and `packages/cli/src/config/settings.ts`.
+> **Not verified, and therefore not assumed:** the Gemini CLI hooks shape (the scanner
+> reads Gemini hooks with the same walk it uses for Claude Code); whether `NODE_OPTIONS`
+> or `LD_PRELOAD` set in `.gemini/.env` reaches a child process Gemini CLI starts; which
+> tool reads a `*_PROXY_COMMAND` or `GEMINI_SANDBOX*` key in a Codex `config.toml` (the
+> reference lists none, and the check keeps them); and `.gemini/.env` files in public
+> repositories, which were not sampled. Treat Gemini and Codex hits as "this file asks
+> for it", and check the current vendor behavior before you rely on a verdict.
 
 ---
 
@@ -137,29 +144,76 @@ the verification note).
 
 ### AGCFG-006 — Workspace env file overrides sandbox, proxy, endpoint or trust (Severity: critical, Confidence: 0.8, Fix type: config)
 
-**What we detect:** key **names** (never values) in env and config files. In
-`.gemini/.env` and `.codex/config.toml`: `GEMINI_SANDBOX*`, `*_PROXY_COMMAND`,
-`*_BASE_URL` (covering `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`), `NODE_OPTIONS`,
-`LD_PRELOAD`. In a repo-root `.env`: only `GEMINI_SANDBOX*` and `*_PROXY_COMMAND`,
-because ordinary applications set the others. Also Codex `sandbox_mode =
-"danger-full-access"` and `approval_policy = "never"`. Gated by
-`repo_workspace_env_overrides_trust`.
+**What we detect:** key **names** (values are not read) in env and config files.
+In `.gemini/.env`: `GEMINI_SANDBOX*`, `*_PROXY_COMMAND`, `GOOGLE_GEMINI_BASE_URL`,
+`GOOGLE_VERTEX_BASE_URL`, `NODE_OPTIONS`, `LD_PRELOAD`. In `.codex/config.toml`:
+`sandbox_mode = "danger-full-access"`, `approval_policy = "never"`, and the keys
+`NODE_OPTIONS`, `LD_PRELOAD`, `*_PROXY_COMMAND` and `GEMINI_SANDBOX*` at any depth. In a
+repo-root `.env`: `GEMINI_SANDBOX*` and `*_PROXY_COMMAND` alone, because ordinary
+applications set the others. Gated by `repo_workspace_env_overrides_trust`.
 
-**Why it is flaggable:** these keys change what the harness executes or where it
-sends traffic. A `*_PROXY_COMMAND` is a command the tool runs; a `*_BASE_URL`
-redirects prompts and credentials; `NODE_OPTIONS` and `LD_PRELOAD` change what code
-is loaded. CVE-2026-12537 is the `GEMINI_SANDBOX_PROXY_COMMAND` case.
+What is not flagged, and why. A `*_BASE_URL` key is judged where the tool reads it.
+- Gemini CLI reads two endpoint variables. `contentGenerator.ts` takes
+  `process.env['GOOGLE_VERTEX_BASE_URL']` for Vertex auth and
+  `process.env['GOOGLE_GEMINI_BASE_URL']` otherwise. A search of the repository's
+  `packages/` and `docs/` found no `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL` or
+  `GEMINI_API_BASE`. A key Gemini CLI does not read is not an override of Gemini CLI.
+- Codex ignores endpoint keys in a project file. The reference says: "Codex ignores
+  `openai_base_url`, `chatgpt_base_url`, `apps_mcp_product_sku`, `model_provider`,
+  `model_providers`, `notify`, `profile`, `profiles`, `experimental_realtime_ws_base_url`,
+  and `otel` when they appear in a project-local `.codex/config.toml`". The loader's
+  `PROJECT_LOCAL_CONFIG_DENYLIST` removes the same set (and two more) from the project
+  table before use, with the comment "Project-local config comes from repository
+  contents, so it should not get to choose where a user's credentials are sent or which
+  local commands are run." So `config.toml` judges no endpoint key.
 
-**Real-world consequence:** opening the repo starts the proxy command, or routes
-model traffic to a host the repo author chose.
+**Why it is flaggable:** these keys change what the harness executes or what code it
+loads. A `*_PROXY_COMMAND` is a command the tool runs. `GOOGLE_GEMINI_BASE_URL` and
+`GOOGLE_VERTEX_BASE_URL` change where Gemini CLI sends prompts and credentials.
+`NODE_OPTIONS` and `LD_PRELOAD` change what code is loaded. CVE-2026-12537 is the
+`GEMINI_SANDBOX_PROXY_COMMAND` case.
 
-**Why severity is critical:** the cited CVE is rated CVSS v4 10.0. **Fix type —
-config:** delete the key; set sandbox and proxy options in user-level config.
+In Codex, `NODE_OPTIONS` and `LD_PRELOAD` under `[shell_environment_policy.set]` in a
+project file are kept by the loader. `sanitize_project_config` in
+`codex-rs/config/src/loader/mod.rs` filters that table when a credential broker is enabled,
+and not otherwise (`credential_broker ==
+CredentialBrokerProjectState::Enabled`). In that case it drops `experimental_use_profile`
+from `shell_environment_policy`, and drops from `set` the keys that match `ZDOTDIR` or
+`BASH_ENV` (`key.eq_ignore_ascii_case("ZDOTDIR")`, `key.eq_ignore_ascii_case("BASH_ENV")`),
+a credential-broker provider environment key, or
+a trusted provider environment key. `NODE_OPTIONS` and `LD_PRELOAD` are not in that list.
+When no credential broker is enabled, the loader filters nothing in this table, so all
+keys in `set` are kept. Either way the two keys reach the environment of the commands Codex
+runs, after the project is trusted.
 
-**Confidence 0.8:** key-name matching is precise, but a legitimate corporate proxy
-or gateway in `.gemini/.env` is flagged the same as a malicious one. Values are
-never read, so the rule cannot distinguish them. The Codex trust behavior is
-unverified.
+**Trust conditions.** Gemini CLI's `loadEnvironment` loads the file in a trusted
+workspace; in an untrusted one it loads the four keys `GEMINI_API_KEY`, `GOOGLE_API_KEY`,
+`GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`. The reference says Codex "loads
+project-scoped config files only when you trust the project". So a finding describes what
+happens after the folder is trusted.
+
+**Real-world consequence:** after the folder is trusted, a proxy command in the file runs,
+and an endpoint override sends Gemini prompts and credentials to the host the repo author
+named, with no further prompt.
+
+**Why severity is critical:** The pack sets critical and states no reasoning for it.
+CVE-2026-12537, the `GEMINI_SANDBOX_PROXY_COMMAND` case, is rated CVSS v4 10.0; that score
+is stated for that issue, not for each arm of this rule. **Fix type — config:** delete the
+key; set sandbox and proxy options in user-level config.
+
+**Confidence 0.8:** key-name matching is precise for the keys listed. A legitimate
+corporate proxy or gateway in `.gemini/.env`, or an endpoint override that names the
+vendor's own host, is flagged like a malicious one, because values are not read. The
+verification-status note lists what remains unverified.
+
+**Sources, each cited for the statements above and nothing more.**
+- Codex configuration reference, retrieved 2026-11-11: the ignored-key list and the trust
+  sentence.
+- `codex-rs/config/src/loader/mod.rs` (`openai/codex`, `main`, retrieved 2026-11-11):
+  `PROJECT_LOCAL_CONFIG_DENYLIST` and `sanitize_project_config`.
+- Gemini CLI `docs/reference/configuration.md` and `packages/core/src/core/contentGenerator.ts`
+  (`google-gemini/gemini-cli`, commit `e5d88fb`, retrieved 2026-11-11): the endpoint
+  variables. `packages/cli/src/config/settings.ts`: the untrusted-workspace key list.
 
 ### AGCFG-007 — Editor settings enable agent auto-approve (Severity: high, Confidence: 0.85, Fix type: config)
 
@@ -189,12 +243,15 @@ key names can hit an unrelated setting that happens to contain `yolo`.
 - Whether a committed file is actually tracked by git. The scanner sees the working
   tree, so a gitignored `settings.local.json` or `.env` is read like any other.
 - Object-valued auto-approve settings (per-command terminal allow-lists).
-- Env values of any kind: they are never read, so a key with a malicious value and
-  a key with a benign value look the same.
+- Env values of any kind: they are not read, so a key with a malicious value and a key
+  with a benign value look the same.
+- `*_BASE_URL` keys that the tool does not read: Codex ignores them in a project file
+  and Gemini CLI reads two. A tool that reads a different key is not covered.
 - Nested `.env` files outside `.gemini/`, harnesses other than Claude Code, Gemini
   CLI, Codex, VS Code and Cursor, and user-level or enterprise-managed config.
 - Hook scripts' contents: AGCFG-005 flags that a script is invoked, not what it does.
-- Gemini CLI hook semantics and Codex project-config trust behavior (unverified).
+- Gemini CLI hook semantics (unverified), and the tool that reads a `*_PROXY_COMMAND` or
+  `GEMINI_SANDBOX*` key in a Codex `config.toml` (unverified; follow-up).
 
 ---
 
