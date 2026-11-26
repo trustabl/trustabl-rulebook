@@ -23,6 +23,11 @@ rules:
     confidence: 0.6
     scope: repo
     fix_type: config
+  - id: MCPCFG-006
+    severity: high
+    confidence: 0.7
+    scope: repo
+    fix_type: config
 references: [LLM06, LLM03]
 ---
 
@@ -30,9 +35,9 @@ references: [LLM06, LLM03]
 
 **Policy ID:** `agent_config_mcp_client_config`  
 **File:** `agent_config/mcp_client_config.yaml`  
-**Rules:** MCPCFG-002, MCPCFG-003, MCPCFG-004, MCPCFG-005  
-**Severities:** high, high, high, medium  
-**Fix types:** config, config, config, config  
+**Rules:** MCPCFG-002, MCPCFG-003, MCPCFG-004, MCPCFG-005, MCPCFG-006  
+**Severities:** high, high, high, medium, high  
+**Fix types:** config, config, config, config, config  
 **References:** LLM06 (Excessive Agency), LLM03 (Supply Chain)
 
 > **Verification status.** The Gemini CLI settings shape and the Codex
@@ -62,6 +67,15 @@ references: [LLM06, LLM03]
 > matches the substring `SERVICE_ROLE`); what a fine-grained GitHub token can
 > restrict; and whether any of these patterns occurs in real repositories (the
 > corpus holds no real client configs).
+
+> **Verification status for MCPCFG-006.** Read on 2026-11-25 as raw text: the
+> `modelcontextprotocol/servers` README (the "Archived" list), the README of
+> `modelcontextprotocol/servers-archived`, and the `package.json` or `pyproject.toml` of each
+> archived server in that repository, for its package name. The Glow Labs post and the
+> Help Net Security write-up named in the Sources were not re-read for this rule. **Not
+> verified, and therefore not assumed:** whether each package is still downloadable from its
+> registry, its download counts, whether a registry marks it deprecated, and the maintained
+> replacement for any server other than Brave Search, for which the README names one.
 
 ---
 
@@ -465,6 +479,55 @@ private network or in a container is flagged, because no client page read gives 
 exemption for those hosts. A URL that is built from a variable, or a server reached
 through a proxy configured outside the file, is not seen.
 
+### MCPCFG-006 — Project MCP config launches an archived reference server (Severity: high, Confidence: 0.7, Fix type: config)
+
+**What we detect:** an MCP client config entry started by `npx`, `bunx`, `pnpm dlx`, `uvx`,
+`uv tool run` or `pipx run` on one of these packages, at any version or tag, including a
+`--package` or `-p` form: `@modelcontextprotocol/server-aws-kb-retrieval`,
+`server-brave-search`, `server-everart`, `server-github`, `server-gitlab`, `server-gdrive`,
+`server-google-maps`, `server-postgres`, `server-puppeteer`, `server-redis`, `server-slack`
+(all under `@modelcontextprotocol/`), `mcp-server-sentry` and `mcp-server-sqlite`. Gated by
+`repo_mcp_config_launches_deprecated_package`. The hit's Reason names the server.
+
+What is not flagged: a server started from a container image, from a path inside the repo
+(MCPCFG-002), from a git or URL spec, or over a remote `url`; a maintained reference server
+such as `server-filesystem` or `server-memory`; and the Git reference server (`mcp-server-git`),
+which the README does not list as archived.
+
+**Why it is flaggable.** The `modelcontextprotocol/servers` README, read 2026-11-25, has an
+"Archived" section that says these reference servers "are now archived and can be found at
+servers-archived", and lists AWS KB Retrieval, Brave Search, EverArt, GitHub, GitLab, Google
+Drive, Google Maps, PostgreSQL, Puppeteer, Redis, Sentry, Slack and SQLite. The README of
+`servers-archived`, read the same day, states: "This repository is archived and no longer
+maintained", and "NO SECURITY GUARANTEES ARE PROVIDED FOR THESE ARCHIVED SERVERS", with
+"No security updates or bug fixes will be provided". The package names come from the `name`
+field of each server's `package.json` or `pyproject.toml` in that repository. The Git server
+appears in the archived repository's list but not in the servers README's "Archived" list,
+and that README shows `uvx mcp-server-git` as a current command, so the pack does not list it.
+
+**Real-world consequence:** the entry runs code that receives no fixes, with the arguments
+and environment the entry gives it. A pinned version does not change that, so a pinned
+launch is flagged like an unpinned one (MCPCFG-003 judges pinning separately, and MCPCFG-004
+judges the credential scope of the GitHub package).
+
+**The problem class in the literature.** A Glow Labs post, "MCPhantom: AI Coding Agents Are
+Installing Vulnerable Deprecated MCP Servers From Training Data" (2026-11-03), and a Help
+Net Security write-up of it, report on coding agents that install deprecated MCP servers. They
+are cited for that topic and nothing more; this rule does not take its package list or any
+count from them.
+
+**Why severity is high:** The pack sets high and states no reasoning for it. The cost the
+explanation names is that the launched code receives no security updates or bug fixes.
+
+**Fix type — config:** replace the entry with the maintained server for the service, where the
+README names one (Brave Search: `@brave/brave-search-mcp-server`), or remove it, and pin the
+replacement to an exact version.
+
+**Confidence 0.7:** the pack's explanation states these limits: it reads MCP client config files
+and the launcher forms above; the package list is fixed and was read on 2026-11-25; the Git
+server is not listed; container-image, in-repo, git, URL and remote servers are not judged;
+whether the package is still downloadable is not checked.
+
 ---
 
 ## What this policy does not cover
@@ -550,7 +613,15 @@ one on the developer's own machine.
 
 ## Sources
 
-Retrieved 2026-10-28 unless a version is named.
+Retrieved 2026-10-28 unless a date or version is named.
+
+- `modelcontextprotocol/servers` README (`github.com/modelcontextprotocol/servers`), the
+  "Archived" list, and `modelcontextprotocol/servers-archived` README and per-server
+  `package.json` / `pyproject.toml`, retrieved 2026-11-25. Cited for the MCPCFG-006 package
+  list, the archived status and the no-security-updates statement, and nothing more.
+- Glow Labs, "MCPhantom: AI Coding Agents Are Installing Vulnerable Deprecated MCP Servers
+  From Training Data", 2026-11-03, and the Help Net Security write-up of 2026-11-03. Cited for
+  the topic of MCPCFG-006 and nothing more.
 
 - Invariant Labs, Marco Milanta and Luca Beurer-Kellner, "GitHub MCP Exploited:
   Accessing private repositories via MCP", 2025-05-26.
