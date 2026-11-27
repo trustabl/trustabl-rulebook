@@ -89,6 +89,18 @@ signals exist but none is `init` or `instrument_kwarg`; OBS-002 when exporters
 exist and every one has sink `console`; OBS-003 when any `content_capture`
 signal is present.
 
+LangWatch (`langwatch`) is one of these vendors, on the same footing as
+Langfuse: it has no rules of its own. Its `init` evidence is `langwatch.setup()`
+and the `@langwatch.trace()` / `@langwatch.span()` decorators in Python, which
+start the SDK from `LANGWATCH_API_KEY` even without `setup()`, resolved through
+the file's `langwatch` import bindings; and `setupObservability` or
+`LangWatchTraceExporter` in TypeScript. Both SDKs emit OpenTelemetry spans (the
+Python SDK builds an OpenTelemetry tracer provider with an OTLP/HTTP exporter;
+the TypeScript SDK starts an OpenTelemetry `NodeSDK`), which qualifies LangWatch
+for a future "emits OpenTelemetry spans" check. The detection was written
+against `langwatch` 1.4.0 (PyPI) and 2.2.0 (npm); later SDK releases may rename
+these calls.
+
 OBS-006, OBS-007 and OBS-008 cover a different layer: tracing that works, but
 whose spans say too little to diagnose an agent. They check for `agent-reliability-otel-labels`,
 the library that adds process-metadata labels (run identity, step order,
